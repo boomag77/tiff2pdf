@@ -1,36 +1,45 @@
+// #cgo CFLAGS: -I/path/to/include
+// #cgo LDFLAGS: -L/path/to/lib -ltiff2png
 package main
 
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
+	"tiff2pdf/contracts"
 	"tiff2pdf/converter"
+	"tiff2pdf/files_manager"
 	"time"
 )
+
+type InputFlags = contracts.InputFlags
 
 func main() {
 	inputRootDir := flag.String("input", "", "Input directory containing TIFF files")
 	outputDir := flag.String("output", "", "Output directory for converted files")
+	jpegQuality := flag.Int("quality", 100, "JPEG quality (1-100)")
 	flag.Parse()
 
-	if *inputRootDir == "" || *outputDir == "" {
-		fmt.Println("Please provide both input and output directories.")
-		return
+	args := InputFlags{
+		InputRootDir: *inputRootDir,
+		OutputDir:    *outputDir,
 	}
-	// Check if input directory exists
-	if stat, err := os.Stat(*inputRootDir); err != nil || !stat.IsDir() {
-		fmt.Println("ERROR: Input directory does not exist or is not a directory.")
-		os.Exit(1)
-	}
-	if stat, err := os.Stat(*outputDir); err != nil || !stat.IsDir() {
-		fmt.Println("ERROR: Output directory does not exist or is not a directory.")
+
+	fmt.Println("inputRootDir:", args.InputRootDir)
+	fmt.Println("outputDir:", args.OutputDir)
+
+	err := files_manager.CheckProvidedDirs(*inputRootDir, *outputDir)
+	if err != nil {
+		fmt.Printf("[ERROR]: %v\n", err)
 		os.Exit(1)
 	}
 
-	subDirs, err := getSubDirs(*inputRootDir)
+	subDirs, err := files_manager.GetSubDirs(*inputRootDir)
 	if err != nil {
 		fmt.Printf("Error getting subdirectories: %v\n", err)
 		os.Exit(1)
@@ -42,13 +51,13 @@ func main() {
 	}()
 
 	if len(subDirs) == 0 {
-		err := converter.Convert(*inputRootDir, *outputDir)
+		err := converter.Convert(*inputRootDir, *outputDir, *jpegQuality)
 		if err != nil {
 			fmt.Printf("Error during conversion: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("Conversion completed successfully.")
-		return
+		os.Exit(0)
 	}
 
 	maxConversions := max(runtime.NumCPU()-1, 1)
@@ -67,7 +76,7 @@ func main() {
 			sem <- struct{}{}        // Acquire a token
 			defer func() { <-sem }() // Release the token
 
-			err := converter.Convert(subDir, *outputDir)
+			err := converter.Convert(subDir, *outputDir, *jpegQuality)
 			if err != nil {
 				fmt.Printf("Error during conversion in subdirectory %s: %v\n", subDir, err)
 				return
@@ -79,17 +88,25 @@ func main() {
 
 }
 
-func getSubDirs(root string) ([]string, error) {
-	entries, err := os.ReadDir(root)
+func startDaemon(jpegQuality int) (io.WriteCloser, io.ReadCloser, *exec.Cmd, error) {
+
+	wd, err := os.Getwd()
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, fmt.Errorf("failed to get working directory: %w", err)
 	}
-	var subDirs []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			subDirPath := filepath.Join(root, entry.Name())
-			subDirs = append(subDirs, subDirPath)
-		}
+	var cBin string
+	var cmd *exec.Cmd
+
+	cBin = filepath.Join(wd, "bin", "tiff2jpg_daemon")
+	quality := fmt.Sprintf("--quality=%d", jpegQuality)
+	cmd = exec.Command(cBin, quality)
+
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+
+	if err := cmd.Start(); err != nil {
+		return nil, nil, nil, fmt.Errorf("daemon start failed: %w", err)
 	}
-	return subDirs, nil
+	fmt.Printf("Daemon started with PID: %d\n", cmd.Process.Pid)
+	return stdin, stdout, cmd, nil
 }

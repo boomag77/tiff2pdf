@@ -1,7 +1,10 @@
 package utils
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dsoprea/go-exif/v3"
@@ -59,3 +62,55 @@ func GetTIFFDPI(filePath string) (float64, float64, error) {
 
 	return dpiX, dpiY, nil
 }
+
+func GetDPIfromPNG(data []byte) (float64, error) {
+	const physChunk = "pHYs"
+	buf := bytes.NewReader(data)
+
+	for {
+		var length uint32
+		if err := binary.Read(buf, binary.BigEndian, &length); err != nil {
+			break
+		}
+
+		chunkType := make([]byte, 4)
+		if _, err := io.ReadFull(buf, chunkType); err != nil {
+			break
+		}
+
+		if string(chunkType) == physChunk {
+			var pxPerUnitX, pxPerUnitY uint32
+			var unit byte
+
+			if err := binary.Read(buf, binary.BigEndian, &pxPerUnitX); err != nil {
+				return 0, err
+			}
+			if err := binary.Read(buf, binary.BigEndian, &pxPerUnitY); err != nil {
+				return 0, err
+			}
+			if err := binary.Read(buf, binary.BigEndian, &unit); err != nil {
+				return 0, err
+			}
+
+			// Skip CRC
+			if _, err := buf.Seek(4, io.SeekCurrent); err != nil {
+				return 0, err
+			}
+
+			if unit == 1 {
+				dpi := float64(pxPerUnitX) * 0.0254
+				return dpi, nil
+			}
+			break // unit = 0 (unknown)
+		}
+
+		// skip chunk data + CRC
+		if _, err := buf.Seek(int64(length)+4, io.SeekCurrent); err != nil {
+			break
+		}
+	}
+
+	// Not found, fallback
+	return 72, nil // assume default
+}
+

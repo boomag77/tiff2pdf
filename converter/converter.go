@@ -5,13 +5,18 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"tiff2pdf/utils"
 
 	"github.com/phpdave11/gofpdf"
-	"golang.org/x/image/tiff"
+	//"gopkg.in/gographics/imagick.v2/imagick"
+	//"github.com/davidbyttow/govips/v2/vips"
 )
 
 type Page struct {
@@ -21,7 +26,8 @@ type Page struct {
 
 type convertResult struct {
 	imageId    string
-	imgBuffer  *bytes.Buffer
+	imgFormat  string
+	imgBuffer  *bytes.Reader
 	drawWidth  float64
 	drawHeight float64
 	x, y       float64
@@ -34,24 +40,56 @@ type convertTask struct {
 	resultCh   chan convertResult
 }
 
-func (p *Page) calcPageScale(imgWidth float64, imgHeight float64) float64 {
-	return p.width / imgWidth
-}
+type OutputFormat string
+
+const (
+	pngFormat OutputFormat = "PNG"
+	jpgFormat OutputFormat = "JPG"
+)
+
+var imgFormat OutputFormat = jpgFormat
+var jpegQualityC = 100
+var pngCompressionLevel = png.DefaultCompression
 
 func GetTiffFiles(inputDir string) ([]string, int64, error) {
-	var files []string
+
 	var size int64 = 0
-	err := filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+	var tiffFilesCount int = 0
+
+	entries, err := os.ReadDir(inputDir)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	files := make([]string, 0, len(entries))
+
+	//var dirs = make(map[string]int)
+
+	err = filepath.WalkDir(inputDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
+			// if _, exists := dirs[path]; !exists {
+			// 	dirs[path] = 0
+			// }
 			return nil
 		}
-		ext := strings.ToLower(filepath.Ext(info.Name()))
+
+		if strings.HasPrefix(d.Name(), "._") {
+			return nil
+		}
+
+		ext := strings.ToLower(filepath.Ext(d.Name()))
 		if ext == ".tiff" || ext == ".tif" {
+			//dirs[filepath.Dir(path)]++
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
 			size += info.Size()
 			files = append(files, path)
+			tiffFilesCount++
 		}
 		return nil
 	})
@@ -61,50 +99,115 @@ func GetTiffFiles(inputDir string) ([]string, int64, error) {
 	return files, size, nil
 }
 
-func getImageFromTiff(filePath string) (image.Image, error) {
-	tiffFile, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("Error opening TIFF file: %v", err)
+func decodeTIFF(filePath string) ([]byte, error) {
+
+	if daemonStdin != nil && daemonStdout != nil {
+		return decodeFromDaemon(filePath)
 	}
-	defer tiffFile.Close()
-	img, err := tiff.Decode(tiffFile)
+	return decodeWithC(filePath)
+}
+
+func decodeWithC(tiffPath string) ([]byte, error) {
+
+	wd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("Error decoding TIFF file: %v", err)
+		return nil, err
 	}
-	return img, nil
+	var cBin string
+	var cmd *exec.Cmd
+	if imgFormat == pngFormat {
+		cBin = filepath.Join(wd, "bin", "tiff2png")
+		cmd = exec.Command(cBin, tiffPath)
+	} else {
+		cBin = filepath.Join(wd, "bin", "tiff2jpg")
+		quality := fmt.Sprintf("--quality=%d", jpegQualityC)
+		cmd = exec.Command(cBin, tiffPath, quality)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+
+	if err != nil {
+		return nil, fmt.Errorf("tiff2png failed: %w\nstderr: %s", err, stderr.String())
+	}
+	return stdout.Bytes(), nil
 }
 
 func getTIFFName(filePath string) string {
 	return strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
 }
 
-func convertWorker(taskChan <-chan convertTask, wg *sync.WaitGroup) {
+func convertWorker(taskChan <-chan convertTask, daemon *DecoderDaemon, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for task := range taskChan {
-		img, err := getImageFromTiff(task.filePath)
-		if err != nil {
-			fmt.Printf("Error getting image from file %s: %v\n", task.filePath, err)
-			return
-		}
-		var buf bytes.Buffer
-		png.Encode(&buf, img)
-		bounds := img.Bounds()
 
-		mmImgWidth := float64(bounds.Dx()) * 25.4
-		mmImgHeight := float64(bounds.Dy()) * 25.4
+		if imgFormat == pngFormat {
+			pngData, err := decodeTIFF(task.filePath)
+			if err != nil {
+				fmt.Printf("Error decoding image: %v\n", err)
+				return
+			}
 
-		x := 0.0
-		y := 0.0
+			buf := bytes.NewReader(pngData)
 
-		task.resultCh <- convertResult{
-			imageId:    fmt.Sprintf("img_%d", task.pageNumber),
-			imgBuffer:  &buf,
-			drawWidth:  mmImgWidth,
-			drawHeight: mmImgHeight,
-			x:          x,
-			y:          y,
-			pageIndex:  task.pageNumber,
+			cfg, _, err := image.DecodeConfig(bytes.NewReader(pngData))
+			if err != nil {
+				fmt.Printf("Error decoding PNG config: %v\n", err)
+				return
+			}
+
+			dpi, err := utils.GetDPIfromPNG(pngData)
+			if err != nil {
+				dpi = 72
+			}
+
+			mmImgWidth := float64(cfg.Width) * 25.4 / dpi
+			mmImgHeight := float64(cfg.Height) * 25.4 / dpi
+
+			x := 0.0
+			y := 0.0
+
+			task.resultCh <- convertResult{
+				imageId:    fmt.Sprintf("img_%d", task.pageNumber),
+				imgBuffer:  buf,
+				imgFormat:  string(imgFormat),
+				drawWidth:  mmImgWidth,
+				drawHeight: mmImgHeight,
+				x:          x,
+				y:          y,
+				pageIndex:  task.pageNumber,
+			}
+		} else {
+			jpgData, err := daemon.Decode(task.filePath)
+			if err != nil {
+				fmt.Printf("Error decoding image: %v\n", err)
+				return
+			}
+			buf := bytes.NewReader(jpgData)
+			cfg, _, err := image.DecodeConfig(bytes.NewReader(jpgData))
+			if err != nil {
+				fmt.Printf("Error decoding JPG config: %v\n", err)
+				return
+			}
+			dpi := 300.0
+			mmImgWidth := float64(cfg.Width) * 25.4 / dpi
+			mmImgHeight := float64(cfg.Height) * 25.4 / dpi
+			x := 0.0
+			y := 0.0
+			task.resultCh <- convertResult{
+				imageId:    fmt.Sprintf("img_%d", task.pageNumber),
+				imgBuffer:  buf,
+				imgFormat:  string(imgFormat),
+				drawWidth:  mmImgWidth,
+				drawHeight: mmImgHeight,
+				x:          x,
+				y:          y,
+				pageIndex:  task.pageNumber,
+			}
 		}
 	}
 }
@@ -119,7 +222,7 @@ func calcBufferSize(totalSize int64) int {
 	return estimatedPagesInMemory
 }
 
-func Convert(inputDir string, outputDir string) error {
+func Convert(inputDir string, outputDir string, jpegQuality int) error {
 
 	filesToConvert, totalSize, err := GetTiffFiles(inputDir)
 	if err != nil {
@@ -133,13 +236,24 @@ func Convert(inputDir string, outputDir string) error {
 	bufferSize := calcBufferSize(totalSize)
 	resultChan := make(chan convertResult, bufferSize)
 
-	numWorkers := 4
+	numWorkers := runtime.NumCPU()
 
 	wg := &sync.WaitGroup{}
 
+	daemons, err := StartDaemonPool(numWorkers, jpegQuality)
+	if err != nil {
+		return fmt.Errorf("Error starting daemon pool: %v", err)
+	}
+	defer func() {
+		for _, daemon := range daemons {
+			_ = daemon.Stdin.Close()
+			_ = daemon.Cmd.Wait()
+		}
+	}()
+
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go convertWorker(taskChan, wg)
+		go convertWorker(taskChan, daemons[i], wg)
 	}
 
 	pdf := gofpdf.NewCustom(&gofpdf.InitType{UnitStr: "mm"})
@@ -168,7 +282,7 @@ func Convert(inputDir string, outputDir string) error {
 				pdf.RegisterImageOptionsReader(
 					result.imageId,
 					gofpdf.ImageOptions{
-						ImageType: "PNG",
+						ImageType: result.imgFormat,
 						ReadDpi:   false,
 					}, result.imgBuffer,
 				)
@@ -180,7 +294,7 @@ func Convert(inputDir string, outputDir string) error {
 					result.drawHeight,
 					false,
 					gofpdf.ImageOptions{
-						ImageType: "PNG",
+						ImageType: result.imgFormat,
 						ReadDpi:   false,
 					},
 					0,
@@ -210,11 +324,13 @@ func Convert(inputDir string, outputDir string) error {
 
 	dirName := filepath.Base(filepath.Clean(inputDir))
 	pdfFilePath := filepath.Join(outputDir, dirName+".pdf")
+	pdfPageCount := pdf.PageCount()
 	err = pdf.OutputFileAndClose(pdfFilePath)
 	if err != nil {
 		return fmt.Errorf("Error saving PDF file: %v", err)
 	}
 
-	fmt.Printf("Converted to %s\n", pdfFilePath)
+	//fmt.Printf("Converted to %s\n", pdfFilePath)
+	fmt.Println("Folder " + dirName + " - " + fmt.Sprint(len(filesToConvert)) + " files converted to PDF with " + fmt.Sprint(pdfPageCount) + " pages")
 	return nil
 }
