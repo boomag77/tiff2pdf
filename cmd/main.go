@@ -28,18 +28,19 @@ func main() {
 	args := InputFlags{
 		InputRootDir: *inputRootDir,
 		OutputDir:    *outputDir,
+		JpegQuality:  *jpegQuality,
 	}
 
 	fmt.Println("inputRootDir:", args.InputRootDir)
 	fmt.Println("outputDir:", args.OutputDir)
 
-	err := files_manager.CheckProvidedDirs(*inputRootDir, *outputDir)
+	err := files_manager.CheckProvidedDirs(args.InputRootDir, args.OutputDir)
 	if err != nil {
 		fmt.Printf("[ERROR]: %v\n", err)
 		os.Exit(1)
 	}
 
-	subDirs, err := files_manager.GetSubDirs(*inputRootDir)
+	subDirs, err := files_manager.GetSubDirs(args.InputRootDir)
 	if err != nil {
 		fmt.Printf("Error getting subdirectories: %v\n", err)
 		os.Exit(1)
@@ -51,7 +52,7 @@ func main() {
 	}()
 
 	if len(subDirs) == 0 {
-		err := converter.Convert(*inputRootDir, *outputDir, *jpegQuality)
+		err := converter.Convert(args.InputRootDir, args.OutputDir, args.JpegQuality)
 		if err != nil {
 			fmt.Printf("Error during conversion: %v\n", err)
 			os.Exit(1)
