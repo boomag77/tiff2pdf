@@ -34,6 +34,13 @@ func main() {
 	fmt.Println("inputRootDir:", args.InputRootDir)
 	fmt.Println("outputDir:", args.OutputDir)
 
+	// tiffDirsMap, _ := files_manager.CreateTIFFDirsMap(args.InputRootDir)
+	// if len(tiffDirsMap) == 0 {
+	// 	fmt.Println("No TIFF files found in the input directory.")
+	// 	os.Exit(0)
+	// }
+	// fmt.Printf("Found %d TIFF directories.\n", len(tiffDirsMap))
+
 	err := files_manager.CheckProvidedDirs(args.InputRootDir, args.OutputDir)
 	if err != nil {
 		fmt.Printf("[ERROR]: %v\n", err)
