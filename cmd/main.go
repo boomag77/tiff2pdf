@@ -9,12 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
-	"sync"
 	"tiff2pdf/contracts"
 	"tiff2pdf/converter"
 	"tiff2pdf/files_manager"
-	"time"
 )
 
 type InputFlags = contracts.InputFlags
@@ -34,65 +31,55 @@ func main() {
 	fmt.Println("inputRootDir:", args.InputRootDir)
 	fmt.Println("outputDir:", args.OutputDir)
 
-	// tiffDirsMap, _ := files_manager.CreateTIFFDirsMap(args.InputRootDir)
-	// if len(tiffDirsMap) == 0 {
-	// 	fmt.Println("No TIFF files found in the input directory.")
-	// 	os.Exit(0)
+	boxFolder, err := files_manager.ResolveBoxFolder(args.InputRootDir)
+	if err != nil {
+		fmt.Printf("Error resolving box folder: %v\n", err)
+		os.Exit(1)
+	}
+	boxFolder.OutputFolder = args.OutputDir
+	//fmt.Println(boxFolder.ConvertedFolder.Path)
+
+	// err := files_manager.CheckProvidedDirs(args.InputRootDir, args.OutputDir)
+	// if err != nil {
+	// 	fmt.Printf("[ERROR]: %v\n", err)
+	// 	os.Exit(1)
 	// }
-	// fmt.Printf("Found %d TIFF directories.\n", len(tiffDirsMap))
 
-	err := files_manager.CheckProvidedDirs(args.InputRootDir, args.OutputDir)
-	if err != nil {
-		fmt.Printf("[ERROR]: %v\n", err)
+	// startTime := time.Now()
+	// defer func() {
+	// 	fmt.Printf("Total time taken: %s\n", time.Since(startTime))
+	// }()
+
+	// maxConversions := max(runtime.NumCPU()-1, 1)
+
+	// sem := make(chan struct{}, maxConversions)
+
+	// var wg sync.WaitGroup
+
+	// fmt.Println("Starting conversion...")
+
+	// for _, tiffFolder := range boxFolder.FinalizedFolder {
+	// 	wg.Add(1)
+	// 	go func(tiffFolder string) {
+	// 		defer wg.Done()
+
+	// 		sem <- struct{}{}        // Acquire a token
+	// 		defer func() { <-sem }() // Release the token
+
+	// 		err := converter.Convert(tiffFolder, *outputDir, args.JpegQuality)
+	// 		if err != nil {
+	// 			fmt.Printf("Error during conversion in subdirectory %s: %v\n", tiffFolder, err)
+	// 			return
+	// 		}
+	// 	}(tiffFolder.Path)
+	// }
+	// wg.Wait()
+	// fmt.Println("Conversion completed successfully.")
+
+	if err := converter.Convert(boxFolder, args.JpegQuality); err != nil {
+		fmt.Printf("Error during conversion: %v\n", err)
 		os.Exit(1)
 	}
-
-	subDirs, err := files_manager.GetSubDirs(args.InputRootDir)
-	if err != nil {
-		fmt.Printf("Error getting subdirectories: %v\n", err)
-		os.Exit(1)
-	}
-
-	startTime := time.Now()
-	defer func() {
-		fmt.Printf("Total time taken: %s\n", time.Since(startTime))
-	}()
-
-	if len(subDirs) == 0 {
-		err := converter.Convert(args.InputRootDir, args.OutputDir, args.JpegQuality)
-		if err != nil {
-			fmt.Printf("Error during conversion: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Conversion completed successfully.")
-		os.Exit(0)
-	}
-
-	maxConversions := max(runtime.NumCPU()-1, 1)
-
-	sem := make(chan struct{}, maxConversions)
-
-	var wg sync.WaitGroup
-
-	fmt.Println("Starting conversion...")
-
-	for _, subDir := range subDirs {
-		wg.Add(1)
-		go func(subDir string) {
-			defer wg.Done()
-
-			sem <- struct{}{}        // Acquire a token
-			defer func() { <-sem }() // Release the token
-
-			err := converter.Convert(subDir, *outputDir, *jpegQuality)
-			if err != nil {
-				fmt.Printf("Error during conversion in subdirectory %s: %v\n", subDir, err)
-				return
-			}
-		}(subDir)
-	}
-	wg.Wait()
-	fmt.Println("Conversion completed successfully.")
 
 }
 
