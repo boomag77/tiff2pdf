@@ -5,19 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"tiff2pdf/contracts"
 )
 
-type TIFFdir struct {
-	TiffFilesPaths []string
-	DirName        string
-	DirPath        string
-	TiffFilesSize  int64
-	TotalEntries   int
-	TiffFilesCount int
-	SubDirsCount   int
-}
+type TIFFfolder = contracts.TIFFfolder
+type ConvertedFolder = contracts.ConvertedFolder
+type BoxFolder = contracts.BoxFolder
 
-func CheckProvidedDirs(inputRootDir, outputDir string) error {
+func CheckProvidedDirs(inputRootDir string, outputDir string) error {
 	if inputRootDir == "" || outputDir == "" {
 		return fmt.Errorf("input and output directories required")
 	}
@@ -57,12 +52,13 @@ func GetSubDirs(root string) ([]string, error) {
 	return subDirs, nil
 }
 
-func getTIFFPaths(dir string) ([]string, error) {
+func getTIFFPaths(dir string) ([]string, int64, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	tiffFiles := make([]string, 0, len(entries))
+	var size int64 = 0
 	for _, entry := range entries {
 		if entry.IsDir() || strings.HasPrefix(entry.Name(), "._") {
 			continue
@@ -70,93 +66,81 @@ func getTIFFPaths(dir string) ([]string, error) {
 		ext := strings.ToLower(filepath.Ext(entry.Name()))
 		if ext == ".tiff" || ext == ".tif" {
 			tiffFiles = append(tiffFiles, filepath.Join(dir, entry.Name()))
+			info, _ := entry.Info()
+			size += info.Size()
 		}
 	}
-	return tiffFiles, nil
+	return tiffFiles, size, nil
 }
 
-func createTIFFDirsMap(root string) (map[string]TIFFdir, error) {
-	// assume root contains tiff files
-	rootDir := TIFFdir{
-		TiffFilesPaths: []string{},
-		DirName:        filepath.Base(filepath.Clean(root)),
-		DirPath:        root,
-		TiffFilesSize:  0,
-		TotalEntries:   0,
-		TiffFilesCount: 0,
-		SubDirsCount:   0,
-	}
+func ResolveBoxFolder(boxFolderPath string) (*BoxFolder, error) {
 
-	entries, err := os.ReadDir(root)
+	entries, err := os.ReadDir(boxFolderPath)
 	if err != nil {
-		return nil, err
+		return &BoxFolder{}, fmt.Errorf("failed to read directory: %v", err)
 	}
-	rootDir.TotalEntries = len(entries)
+	subFoldersCount := len(entries)
+	if subFoldersCount == 0 {
+		return &BoxFolder{}, fmt.Errorf("box folder is empty")
+	}
 
-	dirs := make(map[string]TIFFdir, len(entries))
+	box := BoxFolder{
+		Name: filepath.Base(filepath.Clean(boxFolderPath)),
+		Path: boxFolderPath,
+	}
+
+	hasFinalized := false
+	hasConverted := false
+
 	for _, entry := range entries {
-		if entry.IsDir() {
-			rootDir.SubDirsCount++
-			dirName := entry.Name()
-			dirPath := filepath.Join(root, dirName)
-			currDir := TIFFdir{
-				TiffFilesPaths: []string{},
-				DirName:        entry.Name(),
-				DirPath:        dirPath,
-				TiffFilesSize:  0,
-				TotalEntries:   0,
-				TiffFilesCount: 0,
-				SubDirsCount:   0,
-			}
-			subEntries, err := os.ReadDir(dirPath)
-			if err != nil {
-				return nil, err
-			}
-			currDir.TotalEntries = len(subEntries)
-			for _, subEntry := range subEntries {
-				if subEntry.IsDir() {
-					currDir.SubDirsCount++
-					continue
-				}
-				if strings.HasPrefix(subEntry.Name(), "._") {
+		if !entry.IsDir() {
+			continue
+		}
+		subFolderName := strings.ToLower(entry.Name())
 
-					continue
-				}
-				ext := strings.ToLower(filepath.Ext(subEntry.Name()))
-				if ext == ".tiff" || ext == ".tif" {
-					currDir.TiffFilesPaths = append(currDir.TiffFilesPaths, filepath.Join(dirPath, subEntry.Name()))
-
-					currDir.TiffFilesCount++
-					info, err := subEntry.Info()
-					if err != nil {
-						return nil, err
-					}
-					currDir.TiffFilesSize += info.Size()
-				}
-			}
-			if currDir.TiffFilesCount > 0 {
-				dirs[dirPath] = currDir
-			}
-		} else {
-			if strings.HasPrefix(entry.Name(), "._") {
-				continue
-			}
-			// Check if the entry is a TIFF file
-			ext := strings.ToLower(filepath.Ext(entry.Name()))
-			if ext == ".tiff" || ext == ".tif" {
-				tiffPath := filepath.Join(root, entry.Name())
-				rootDir.TiffFilesPaths = append(rootDir.TiffFilesPaths, tiffPath)
-				rootDir.TiffFilesCount++
-				info, err := entry.Info()
-				if err != nil {
-					return nil, err
-				}
-				rootDir.TiffFilesSize += info.Size()
+		if strings.Contains(subFolderName, string(contracts.Finalized)) {
+			hasFinalized = true
+			box.FinalizedFolder = resolveFinalizedFolder(filepath.Join(boxFolderPath, entry.Name()))
+		}
+		if strings.Contains(subFolderName, string(contracts.Converted)) {
+			hasConverted = true
+			box.ConvertedFolder = ConvertedFolder{
+				Entries: []string{},
+				Path:    filepath.Join(boxFolderPath, entry.Name()),
 			}
 		}
 	}
-	if rootDir.TiffFilesCount > 0 {
-		dirs[root] = rootDir
+	if !hasFinalized && !hasConverted {
+		return nil, fmt.Errorf("box folder does not contain 'Finalized' or 'Converted' subfolders")
 	}
-	return dirs, nil
+	return &box, nil
+}
+
+func resolveFinalizedFolder(folderPath string) []TIFFfolder {
+
+	subDirs, _ := os.ReadDir(folderPath)
+
+	tiffFoldersCount := len(subDirs)
+	if tiffFoldersCount == 0 {
+		return []TIFFfolder{}
+	}
+	tiffFolders := make([]TIFFfolder, 0, len(subDirs))
+
+	for _, entry := range subDirs {
+		if !entry.IsDir() {
+			continue
+		}
+		subDirPath := filepath.Join(folderPath, entry.Name())
+		tiffFiles, size, _ := getTIFFPaths(subDirPath)
+		if len(tiffFiles) == 0 {
+			continue
+		}
+		tiffFolders = append(tiffFolders, TIFFfolder{
+			TiffFilesPaths: tiffFiles,
+			Name:           entry.Name(),
+			Path:           subDirPath,
+			TiffFilesSize:  size,
+		})
+	}
+	return tiffFolders
 }
