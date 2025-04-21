@@ -324,10 +324,10 @@ func startPDFSaverWorkers(taskChan <-chan savePDFTask, wg *sync.WaitGroup, worke
 					fmt.Printf("[Worker %d] Error saving PDF file: %v\n", workerID, err)
 					return
 				}
-				if err := copyFile(task.outputPath, task.boxConvertedPath); err != nil {
-					fmt.Printf("[Worker %d] Error copying PDF file: %v\n", workerID, err)
-					return
-				}
+				// if err := copyFile(task.outputPath, task.boxConvertedPath); err != nil {
+				// 	fmt.Printf("[Worker %d] Error copying PDF file: %v\n", workerID, err)
+				// 	return
+				// }
 				wg.Done()
 			}
 		}(i)
