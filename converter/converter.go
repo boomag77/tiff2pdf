@@ -1,26 +1,23 @@
 package converter
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
-	"image"
-	"image/png"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"tiff2pdf/contracts"
-	"tiff2pdf/utils"
 	"time"
 
 	"github.com/phpdave11/gofpdf"
-	//"gopkg.in/gographics/imagick.v2/imagick"
-	//"github.com/davidbyttow/govips/v2/vips"
 )
 
 type BoxFolder = contracts.BoxFolder
+type TIFFfolder = contracts.TIFFfolder
 
 type Page struct {
 	width  float64
@@ -38,7 +35,7 @@ type convertResult struct {
 }
 
 type convertFolderParam struct {
-	tiffFolder   contracts.TIFFfolder
+	tiffFolder   TIFFfolder
 	boxConverted string
 	outputDir    string
 	jpegQuality  int
@@ -63,173 +60,67 @@ const (
 	jpgFormat OutputFormat = "JPG"
 )
 
-var pdfSaveTasks chan savePDFTask
-var pdfSaveWG sync.WaitGroup
-
 var imgFormat OutputFormat = jpgFormat
 var jpegQualityC = 100
-var pngCompressionLevel = png.DefaultCompression
 
-func Init() {
-	pdfSaveTasks = make(chan savePDFTask, 100)
-	startPDFSaverWorkers(pdfSaveTasks, &pdfSaveWG, 2)
-}
-
-func decodeTIFF(filePath string) ([]byte, error) {
-
-	if daemonStdin != nil && daemonStdout != nil {
-		return decodeFromDaemon(filePath)
-	}
-	return decodeWithC(filePath)
-}
-
-func decodeWithC(tiffPath string) ([]byte, error) {
-
-	wd, err := os.Getwd()
-	if err != nil {
-		return nil, err
-	}
-	var cBin string
-	var cmd *exec.Cmd
-	if imgFormat == pngFormat {
-		cBin = filepath.Join(wd, "bin", "tiff2png")
-		cmd = exec.Command(cBin, tiffPath)
-	} else {
-		cBin = filepath.Join(wd, "bin", "tiff2jpg")
-		quality := fmt.Sprintf("--quality=%d", jpegQualityC)
-		cmd = exec.Command(cBin, tiffPath, quality)
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-
-	if err != nil {
-		return nil, fmt.Errorf("tiff2png failed: %w\nstderr: %s", err, stderr.String())
-	}
-	return stdout.Bytes(), nil
-}
-
-func convertWorker(taskChan <-chan decodeTiffTask, daemon *DecoderDaemon, wg *sync.WaitGroup) {
+func convertWorker(taskChan <-chan decodeTiffTask, quality int, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	// dpi := 300
 
 	for task := range taskChan {
 
-		if imgFormat == pngFormat {
-			pngData, err := decodeTIFF(task.filePath)
-			if err != nil {
-				fmt.Printf("Error decoding image: %v\n", err)
-				return
-			}
+		jpgData, width, height, dpi, err := ConvertTIFFtoJPEG(task.filePath, quality)
+		if err != nil {
+			fmt.Printf("Error encoding JPEG: %v\n", err)
+			continue
+		}
+		buf := bytes.NewReader(jpgData)
 
-			buf := bytes.NewReader(pngData)
-
-			cfg, _, err := image.DecodeConfig(bytes.NewReader(pngData))
-			if err != nil {
-				fmt.Printf("Error decoding PNG config: %v\n", err)
-				return
-			}
-
-			dpi, err := utils.GetDPIfromPNG(pngData)
-			if err != nil {
-				dpi = 72
-			}
-
-			mmImgWidth := float64(cfg.Width) * 25.4 / dpi
-			mmImgHeight := float64(cfg.Height) * 25.4 / dpi
-
-			x := 0.0
-			y := 0.0
-
-			task.resultCh <- convertResult{
-				imageId:    fmt.Sprintf("img_%d", task.pageNumber),
-				imgBuffer:  buf,
-				imgFormat:  string(imgFormat),
-				drawWidth:  mmImgWidth,
-				drawHeight: mmImgHeight,
-				x:          x,
-				y:          y,
-				pageIndex:  task.pageNumber,
-			}
-		} else {
-			//startTime := time.Now()
-			jpgData, err := daemon.Decode(task.filePath)
-			if err != nil {
-				fmt.Printf("Error decoding image: %v\n", err)
-				return
-			}
-			buf := bytes.NewReader(jpgData)
-			cfg, _, err := image.DecodeConfig(bytes.NewReader(jpgData))
-			if err != nil {
-				fmt.Printf("Error decoding JPG config: %v\n", err)
-				return
-			}
-			dpi := 300.0
-			mmImgWidth := float64(cfg.Width) * 25.4 / dpi
-			mmImgHeight := float64(cfg.Height) * 25.4 / dpi
-			x := 0.0
-			y := 0.0
-			task.resultCh <- convertResult{
-				imageId:    fmt.Sprintf("img_%d", task.pageNumber),
-				imgBuffer:  buf,
-				imgFormat:  string(imgFormat),
-				drawWidth:  mmImgWidth,
-				drawHeight: mmImgHeight,
-				x:          x,
-				y:          y,
-				pageIndex:  task.pageNumber,
-			}
-			//fmt.Printf("Decoded %s in %s\n", task.filePath, time.Since(startTime))
+		mmImgWidth := float64(width) * 25.4 / float64(dpi)
+		mmImgHeight := float64(height) * 25.4 / float64(dpi)
+		x := 0.0
+		y := 0.0
+		task.resultCh <- convertResult{
+			imageId:    fmt.Sprintf("img_%d", task.pageNumber),
+			imgBuffer:  buf,
+			imgFormat:  string(imgFormat),
+			drawWidth:  mmImgWidth,
+			drawHeight: mmImgHeight,
+			x:          x,
+			y:          y,
+			pageIndex:  task.pageNumber,
 		}
 	}
 
 }
 
-func calcBufferSize(totalSize int64) int {
-	const maxBufferSize = 200 * 1024 * 1024 // 200 MB
-	approxPNGBytes := int64(float64(totalSize) * 1)
-	estimatedPagesInMemory := int(maxBufferSize / approxPNGBytes)
-	if estimatedPagesInMemory < 1 {
-		estimatedPagesInMemory = 1
-	}
-	return estimatedPagesInMemory
-}
-
 func convertFolder(params convertFolderParam) error {
+	startTime := time.Now()
+
 	if len(params.tiffFolder.TiffFilesPaths) == 0 {
 		return fmt.Errorf("No TIFF files found in the input directory")
 	}
 
 	decodeTiffTaskChan := make(chan decodeTiffTask)
-	bufferSize := calcBufferSize(params.tiffFolder.TiffFilesSize)
-	resultChan := make(chan convertResult, bufferSize)
+	filesCount := len(params.tiffFolder.TiffFilesPaths)
+	resultChan := make(chan convertResult, filesCount)
 
-	numWorkers := runtime.NumCPU()
+	var numWorkers int
+
+	numWorkers = min(runtime.NumCPU(), filesCount)
 
 	wg := &sync.WaitGroup{}
 
-	daemons, err := StartDaemonPool(numWorkers, params.jpegQuality)
-	if err != nil {
-		return fmt.Errorf("Error starting daemon pool: %v", err)
-	}
-	defer func() {
-		for _, daemon := range daemons {
-			_ = daemon.Stdin.Close()
-			_ = daemon.Cmd.Wait()
-		}
-	}()
-
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go convertWorker(decodeTiffTaskChan, daemons[i], wg)
+		go convertWorker(decodeTiffTaskChan, params.jpegQuality, wg)
 	}
 
 	pdf := gofpdf.NewCustom(&gofpdf.InitType{UnitStr: "mm"})
 	pdf.SetMargins(0, 0, 0)
 
-	resultsBuffer := make(map[int]convertResult)
+	resultsBuffer := make(map[int]convertResult, filesCount)
 	nextIndex := 0
 
 	done := make(chan struct{})
@@ -292,82 +183,67 @@ func convertFolder(params convertFolderParam) error {
 	close(resultChan)
 	<-done
 
-	//dirName := filepath.Base(filepath.Clean(inputDir))
 	dirName := params.tiffFolder.Name
 	pdfFilePath := filepath.Join(params.outputDir, dirName+".pdf")
-	pdfCopyPath := filepath.Join(params.boxConverted, dirName+".pdf")
+	secPdfFilePath := filepath.Join(params.boxConverted, dirName+".pdf")
 	pdfPageCount := pdf.PageCount()
 
-	pdfSaveWG.Add(1)
-	pdfSaveTasks <- savePDFTask{
-		pdf:              pdf,
-		boxConvertedPath: pdfCopyPath,
-		outputPath:       pdfFilePath,
+	pdfFile, err := os.Create(pdfFilePath)
+	if err != nil {
+		return fmt.Errorf("Error creating PDF file: %v", err)
 	}
-	//pdfSaveWG.Wait()
-	//err = pdf.OutputFileAndClose(pdfFilePath)
-	// if err != nil {
-	// 	return fmt.Errorf("Error saving PDF file: %v", err)
-	// }
+	defer pdfFile.Close()
+	convertedPdfFile, err := os.Create(secPdfFilePath)
+	if err != nil {
+		return fmt.Errorf("Error creating PDF file at Converted: %v", err)
+	}
+	defer convertedPdfFile.Close()
 
-	//fmt.Printf("Converted to %s\n", pdfFilePath)
+	bwMain := bufio.NewWriterSize(pdfFile, 8*1024*1024)               // 8MB buffer
+	bwConverted := bufio.NewWriterSize(convertedPdfFile, 8*1024*1024) // 8MB buffer
+
+	mw := io.MultiWriter(bwMain, bwConverted)
+
+	if err := pdf.Output(mw); err != nil {
+		return fmt.Errorf("Error writing PDF file to output folder: %v", err)
+	}
+	if err := bwConverted.Flush(); err != nil {
+		return fmt.Errorf("Error flushing buffer to Converted: %v", err)
+	}
+
+	if err := bwMain.Flush(); err != nil {
+		return fmt.Errorf("Error flushing buffer: %v", err)
+	}
+
+	var startSyncTime time.Time = time.Now()
+	if err := convertedPdfFile.Sync(); err != nil {
+		return fmt.Errorf("Error syncing PDF file to Converted: %v", err)
+	}
+	if err := pdfFile.Sync(); err != nil {
+		return fmt.Errorf("Error syncing PDF file to output filder: %v", err)
+	}
+	fmt.Println("PDF file synced to Converted folder with time: " + time.Since(startSyncTime).String())
+
+	endTime := time.Since(startTime)
 	fmt.Println("Folder " + dirName + " - " + fmt.Sprint(len(params.tiffFolder.TiffFilesPaths)) +
-		" files converted to PDF with " + fmt.Sprint(pdfPageCount) + " pages")
+		" files converted to PDF with " + fmt.Sprint(pdfPageCount) + " pages. With time: " + endTime.String())
 	return nil
-}
-
-func startPDFSaverWorkers(taskChan <-chan savePDFTask, wg *sync.WaitGroup, workers int) {
-	for i := 0; i < workers; i++ {
-		go func(workerID int) {
-			for task := range taskChan {
-				if err := task.pdf.OutputFileAndClose(task.outputPath); err != nil {
-					fmt.Printf("[Worker %d] Error saving PDF file: %v\n", workerID, err)
-					return
-				}
-				// if err := copyFile(task.outputPath, task.boxConvertedPath); err != nil {
-				// 	fmt.Printf("[Worker %d] Error copying PDF file: %v\n", workerID, err)
-				// 	return
-				// }
-				wg.Done()
-			}
-		}(i)
-	}
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
 }
 
 func Convert(boxFolder *BoxFolder, jpegQuality int) error {
 
-	Init()
-	defer func() {
-		close(pdfSaveTasks)
-		pdfSaveWG.Wait()
-
-	}()
+	maxConversions := len(boxFolder.FinalizedFolder)
+	sort.SliceStable(boxFolder.FinalizedFolder, func(i, j int) bool {
+		return len(boxFolder.FinalizedFolder[i].TiffFilesPaths) > len(boxFolder.FinalizedFolder[j].TiffFilesPaths)
+	})
 
 	startTime := time.Now()
 	defer func() {
 		fmt.Printf("Total time taken: %s\n", time.Since(startTime))
 	}()
-
-	maxConversions := max(runtime.NumCPU()-1, 1)
+	var wg sync.WaitGroup
 
 	sem := make(chan struct{}, maxConversions)
-
-	var wg sync.WaitGroup
 
 	fmt.Println("Starting conversion...")
 
@@ -376,8 +252,8 @@ func Convert(boxFolder *BoxFolder, jpegQuality int) error {
 		go func(tiffFolder contracts.TIFFfolder) {
 			defer wg.Done()
 
-			sem <- struct{}{}        // Acquire a token
-			defer func() { <-sem }() // Release the token
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			folderParams := convertFolderParam{
 				tiffFolder:   tiffFolder,
 				boxConverted: boxFolder.ConvertedFolder.Path,

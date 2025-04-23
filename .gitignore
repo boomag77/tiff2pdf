@@ -7,4 +7,6 @@
 *.gif
 *.zip
 *.tar
+*.vscode
 example/
+bin/
