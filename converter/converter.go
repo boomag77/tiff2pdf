@@ -19,10 +19,10 @@ import (
 type BoxFolder = contracts.BoxFolder
 type TIFFfolder = contracts.TIFFfolder
 
-type Page struct {
-	width  float64
-	height float64
-}
+// type Page struct {
+// 	width  float64
+// 	height float64
+// }
 
 type convertResult struct {
 	imageId    string
@@ -47,11 +47,11 @@ type decodeTiffTask struct {
 	resultCh   chan convertResult
 }
 
-type savePDFTask struct {
-	boxConvertedPath string
-	outputPath       string
-	pdf              *gofpdf.Fpdf
-}
+// type savePDFTask struct {
+// 	boxConvertedPath string
+// 	outputPath       string
+// 	pdf              *gofpdf.Fpdf
+// }
 
 type OutputFormat string
 
@@ -61,7 +61,8 @@ const (
 )
 
 var imgFormat OutputFormat = jpgFormat
-var jpegQualityC = 100
+
+//var jpegQualityC = 100
 
 func convertWorker(taskChan <-chan decodeTiffTask, quality int, wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -99,16 +100,14 @@ func convertFolder(params convertFolderParam) error {
 	startTime := time.Now()
 
 	if len(params.tiffFolder.TiffFilesPaths) == 0 {
-		return fmt.Errorf("No TIFF files found in the input directory")
+		return fmt.Errorf("no TIFF files found in the input directory")
 	}
 
 	decodeTiffTaskChan := make(chan decodeTiffTask)
 	filesCount := len(params.tiffFolder.TiffFilesPaths)
 	resultChan := make(chan convertResult, filesCount)
 
-	var numWorkers int
-
-	numWorkers = min(runtime.NumCPU(), filesCount)
+	numWorkers := min(runtime.NumCPU(), filesCount)
 
 	wg := &sync.WaitGroup{}
 
@@ -190,12 +189,12 @@ func convertFolder(params convertFolderParam) error {
 
 	pdfFile, err := os.Create(pdfFilePath)
 	if err != nil {
-		return fmt.Errorf("Error creating PDF file: %v", err)
+		return fmt.Errorf("error creating PDF file: %v", err)
 	}
 	defer pdfFile.Close()
 	convertedPdfFile, err := os.Create(secPdfFilePath)
 	if err != nil {
-		return fmt.Errorf("Error creating PDF file at Converted: %v", err)
+		return fmt.Errorf("error creating PDF file at Converted: %v", err)
 	}
 	defer convertedPdfFile.Close()
 
@@ -205,22 +204,22 @@ func convertFolder(params convertFolderParam) error {
 	mw := io.MultiWriter(bwMain, bwConverted)
 
 	if err := pdf.Output(mw); err != nil {
-		return fmt.Errorf("Error writing PDF file to output folder: %v", err)
+		return fmt.Errorf("error writing PDF file to output folder: %v", err)
 	}
 	if err := bwConverted.Flush(); err != nil {
-		return fmt.Errorf("Error flushing buffer to Converted: %v", err)
+		return fmt.Errorf("error flushing buffer to Converted: %v", err)
 	}
 
 	if err := bwMain.Flush(); err != nil {
-		return fmt.Errorf("Error flushing buffer: %v", err)
+		return fmt.Errorf("error flushing buffer: %v", err)
 	}
 
 	var startSyncTime time.Time = time.Now()
 	if err := convertedPdfFile.Sync(); err != nil {
-		return fmt.Errorf("Error syncing PDF file to Converted: %v", err)
+		return fmt.Errorf("error syncing PDF file to Converted: %v", err)
 	}
 	if err := pdfFile.Sync(); err != nil {
-		return fmt.Errorf("Error syncing PDF file to output filder: %v", err)
+		return fmt.Errorf("error syncing PDF file to output filder: %v", err)
 	}
 	fmt.Println("PDF file synced to Converted folder with time: " + time.Since(startSyncTime).String())
 
