@@ -4,7 +4,9 @@
 package converter
 
 /*
-#cgo pkg-config: libtiff-4 libjpeg
+
+#cgo LDFLAGS: -ljpeg -ltiff
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -147,3 +149,6 @@ func ConvertTIFFtoJPEG(path string, quality int) (jpegData []byte, width, height
 	jpegData = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
 	return jpegData, int(w), int(h), int(d), nil
 }
+
+// // #cgo LDFLAGS: -ltiff -ljpeg -lwebp -lzstd -llzma -ldeflate -ljbig -lLerc -lz
+// #cgo LDFLAGS: -static -ljpeg -ltiff

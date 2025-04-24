@@ -9,5 +9,9 @@
 *.tar
 *.exe
 *.vscode
+*.sh
+*.pem
 example/
 bin/
+keys/
+deps/
