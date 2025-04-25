@@ -1,14 +1,3 @@
-// cgo_converter.go
-//go:build cgo
-// +build cgo
-
-package converter
-
-/*
-
-#cgo LDFLAGS: -ljpeg -ltiff
-
-
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -35,7 +24,7 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
     struct jpeg_error_mgr jerr;
 
     JSAMPROW row_pointer[1];
-    int row_stride = width * (gray ? 1 : 3);
+    int row_stride = width * 3;
 
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_compress(&cinfo);
@@ -79,6 +68,7 @@ int convert_tiff_to_jpeg(const char* path, int quality, int dpi, double scale,
                          int* outWidth, int* outHeight, int* outDpi)
 {
 
+    printf("Start convert_tiff_to_jpeg\n");
 
     TIFF* tif = TIFFOpen(path, "r");
     if (!tif) return -1;
@@ -96,7 +86,6 @@ int convert_tiff_to_jpeg(const char* path, int quality, int dpi, double scale,
 
     size_t npixels = (size_t)width * (size_t)height;
 
-
     uint32_t* raster = _TIFFmalloc(npixels * sizeof(uint32_t));
     if (!raster) {
         TIFFClose(tif);
@@ -109,7 +98,7 @@ int convert_tiff_to_jpeg(const char* path, int quality, int dpi, double scale,
         return -4;
     }
 
-
+    
 
     int scaled_width = (int)(width * scale);
     int scaled_height = (int)(height * scale);
@@ -131,7 +120,6 @@ int convert_tiff_to_jpeg(const char* path, int quality, int dpi, double scale,
     }
     uint8_t* gray = malloc(npixels_scaled);
     if (!gray) {
-        fprintf(stderr, "malloc(gray) failed: %d bytes\n", npixels_scaled);
         free(rgb);
         _TIFFfree(raster);
         TIFFClose(tif);
@@ -139,7 +127,6 @@ int convert_tiff_to_jpeg(const char* path, int quality, int dpi, double scale,
     }
 
     int graycount = 0;
-
 
     for (int y = 0; y < scaled_height; y++) {
         for (int x = 0; x < scaled_width; x++) {
@@ -178,36 +165,3 @@ int convert_tiff_to_jpeg(const char* path, int quality, int dpi, double scale,
 
     return rc == 0 ? 0 : -6;
 }
-*/
-import "C"
-import (
-	"fmt"
-	"unsafe"
-)
-
-// ConvertTIFFtoJPEG reads TIFF from file path and returns JPEG-encoded []byte + width, height, dpi
-func ConvertTIFFtoJPEG(path string, quality int, dpi int, scale float64) (jpegData []byte, width, height, actualDpi int, err error) {
-	cPath := C.CString(path)
-	defer C.free(unsafe.Pointer(cPath))
-
-	var outBuf *C.uchar
-	var outSize C.ulong
-	var w, h, d C.int
-
-	rc := C.convert_tiff_to_jpeg(cPath, C.int(quality), C.int(dpi), C.double(scale),
-		&outBuf, &outSize,
-		&w, &h, &d,
-	)
-
-	if rc != 0 {
-		return nil, 0, 0, 0, fmt.Errorf("convert_tiff_to_jpeg failed with code %d", int(rc))
-	}
-
-	defer C.free(unsafe.Pointer(outBuf))
-	jpegData = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-	return jpegData, int(w), int(h), int(d), nil
-}
-
-// // #cgo LDFLAGS: -ltiff -ljpeg -lwebp -lzstd -llzma -ldeflate -ljbig -lLerc -lz
-// #cgo LDFLAGS: -static -ljpeg -ltiff
-//#cgo LDFLAGS: -ljpeg -ltiff

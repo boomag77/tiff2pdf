@@ -4,9 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"image/jpeg"
-
-	//"image/jpeg"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,10 +13,7 @@ import (
 	"tiff2pdf/contracts"
 	"time"
 
-	//"github.com/chai2010/tiff"
 	"github.com/phpdave11/gofpdf"
-	//"golang.org/x/image/tiff"
-	exiftiff "github.com/rwcarlsen/goexif/tiff"
 )
 
 type BoxFolder = contracts.BoxFolder
@@ -44,6 +38,8 @@ type convertFolderParam struct {
 	tiffFolder   TIFFfolder
 	boxConverted string
 	outputDir    string
+	dpi          int
+	scale        float64
 	jpegQuality  int
 }
 
@@ -70,15 +66,14 @@ var imgFormat OutputFormat = jpgFormat
 
 //var jpegQualityC = 100
 
-func convertWorker(taskChan <-chan decodeTiffTask, quality int, wg *sync.WaitGroup) {
+func convertWorker(taskChan <-chan decodeTiffTask, quality int, dpi int, scale float64, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// dpi := 300
 
 	for task := range taskChan {
 
-		//jpgData, width, height, dpi, err := ConvertTIFFtoJPEG(task.filePath, quality)
-		jpgData, width, height, dpi, err := ConvertTIFFtoJPEGExp(task.filePath, quality)
+		jpgData, width, height, dpi, err := ConvertTIFFtoJPEG(task.filePath, quality, dpi, scale)
 		if err != nil {
 			fmt.Printf("Error encoding JPEG: %v\n", err)
 			continue
@@ -120,7 +115,7 @@ func convertFolder(params convertFolderParam) error {
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go convertWorker(decodeTiffTaskChan, params.jpegQuality, wg)
+		go convertWorker(decodeTiffTaskChan, params.jpegQuality, params.dpi, params.scale, wg)
 	}
 
 	pdf := gofpdf.NewCustom(&gofpdf.InitType{UnitStr: "mm"})
@@ -236,7 +231,7 @@ func convertFolder(params convertFolderParam) error {
 	return nil
 }
 
-func Convert(boxFolder *BoxFolder, jpegQuality int) error {
+func Convert(boxFolder *BoxFolder, jpegQuality int, dpi int, scale float64) error {
 
 	maxConversions := len(boxFolder.FinalizedFolder)
 	sort.SliceStable(boxFolder.FinalizedFolder, func(i, j int) bool {
@@ -264,6 +259,8 @@ func Convert(boxFolder *BoxFolder, jpegQuality int) error {
 				tiffFolder:   tiffFolder,
 				boxConverted: boxFolder.ConvertedFolder.Path,
 				outputDir:    boxFolder.OutputFolder,
+				dpi:          dpi,
+				scale:        scale,
 				jpegQuality:  jpegQuality,
 			}
 			err := convertFolder(folderParams)
@@ -276,243 +273,4 @@ func Convert(boxFolder *BoxFolder, jpegQuality int) error {
 	wg.Wait()
 	fmt.Println("Conversion completed successfully")
 	return nil
-}
-
-// func ConvertTIFFtoJPEG(path string, quality int) (jpegData []byte, width, height, dpi int, err error) {
-// 	// Open the TIFF file
-// 	file, err := os.Open(path)
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("failed to open TIFF file: %w", err)
-// 	}
-// 	defer file.Close()
-
-// 	// Get file stats to seek back to beginning later
-// 	// stat, err := file.Stat()
-// 	// if err != nil {
-// 	// 	return nil, 0, 0, 0, fmt.Errorf("failed to get file stats: %w", err)
-// 	// }
-
-// 	// Try to extract DPI and other metadata first
-// 	dpi, err = extractDPIFromTIFF(file)
-// 	if err != nil {
-// 		// If we can't get DPI, use default
-// 		dpi = 300
-// 	}
-
-// 	// Seek back to beginning of file
-// 	_, err = file.Seek(0, io.SeekStart)
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("failed to seek file: %w", err)
-// 	}
-
-// 	// Decode the TIFF
-// 	img, err := tiff.Decode(file)
-// 	if err != nil {
-// 		// If standard decoder fails, try reading as an LZW compressed TIFF
-// 		_, err = file.Seek(0, io.SeekStart)
-// 		if err != nil {
-// 			return nil, 0, 0, 0, fmt.Errorf("failed to seek file: %w", err)
-// 		}
-
-// 		// You might need a custom decoder for LZW here
-// 		// This is where you'd implement specialized LZW handling
-// 	}
-
-// 	if img == nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("failed to decode TIFF image")
-// 	}
-
-// 	// Get image dimensions
-// 	bounds := img.Bounds()
-// 	width = bounds.Dx()
-// 	height = bounds.Dy()
-
-// 	// Create a buffer for the JPEG output
-// 	var buf bytes.Buffer
-
-// 	// Create JPEG encoder options
-// 	options := jpeg.Options{
-// 		Quality: quality,
-// 	}
-
-// 	// Encode the image as JPEG
-// 	err = jpeg.Encode(&buf, img, &options)
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("failed to encode JPEG: %w", err)
-// 	}
-
-// 	// Return the JPEG data
-// 	return buf.Bytes(), width, height, dpi, nil
-// }
-
-// // Extract DPI from TIFF
-// func extractDPIFromTIFF(r io.ReadSeeker) (int, error) {
-// 	// Implementation depends on the TIFF library you use
-// 	// This is a placeholder - you'll need to implement based on your library
-// 	return 300, nil
-// }
-
-//"github.com/disintegration/imaging"
-// func ConvertTIFFtoJPEG(path string, quality int) (jpegData []byte, width, height, dpi int, err error) {
-// 	// Open and decode the TIFF file using imaging library
-// 	img, err := imaging.Open(path)
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("failed to open/decode TIFF: %w", err)
-// 	}
-
-// 	// Get image dimensions
-// 	bounds := img.Bounds()
-// 	width = bounds.Dx()
-// 	height = bounds.Dy()
-
-// 	// Default DPI
-// 	dpi = 300
-
-// 	// Create a buffer for the JPEG output
-// 	var buf bytes.Buffer
-
-// 	// Create JPEG encoder options
-// 	options := jpeg.Options{
-// 		Quality: quality,
-// 	}
-
-// 	// Encode the image as JPEG
-// 	err = jpeg.Encode(&buf, img, &options)
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("failed to encode JPEG: %w", err)
-// 	}
-
-// 	// Return the JPEG data
-// 	return buf.Bytes(), width, height, dpi, nil
-// }
-
-//tiff "github.com/chai2010/tiff"
-// func ConvertTIFFtoJPEGExp(path string, quality int) (jpegData []byte, width, height, dpi int, err error) {
-// 	// 1) Читаем весь файл
-// 	data, err := os.ReadFile(path)
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("read file: %w", err)
-// 	}
-
-// 	// 2) Декодируем все страницы (если мультистраничный TIFF) в [][]image.Image
-// 	pages, _, err := tiff.DecodeAll(bytes.NewReader(data))
-// 	if err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("decode tiff: %w", err)
-// 	}
-// 	if len(pages) == 0 || len(pages[0]) == 0 {
-// 		return nil, 0, 0, 0, fmt.Errorf("no images in tiff")
-// 	}
-
-// 	img := pages[0][0] // первая страница
-// 	bounds := img.Bounds()
-// 	width, height = bounds.Dx(), bounds.Dy()
-// 	dpi = 300 // по умолчанию
-
-// 	// 3) Кодируем в JPEG
-// 	buf := &bytes.Buffer{}
-// 	if err := jpeg.Encode(buf, img, &jpeg.Options{Quality: quality}); err != nil {
-// 		return nil, 0, 0, 0, fmt.Errorf("encode jpeg: %w", err)
-// 	}
-
-// 	return buf.Bytes(), width, height, dpi, nil
-// }
-
-func ConvertTIFFtoJPEGExp(path string, quality int) (jpegData []byte, width, height, dpi int, err error) {
-	// Открываем файл
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, 0, 0, 0, fmt.Errorf("open %q: %w", path, err)
-	}
-	defer f.Close()
-
-	// Парсим TIFF в структуру Tiff
-	tf, err := exiftiff.Decode(f)
-	if err != nil {
-		return nil, 0, 0, 0, fmt.Errorf("decode tiff: %w", err)
-	}
-	if len(tf.Dirs) == 0 {
-		return nil, 0, 0, 0, fmt.Errorf("no IFD in tiff")
-	}
-	dir := tf.Dirs[0]
-
-	// Собираем параметры Old-Style JPEG
-	var (
-		ileOff, ileLen int
-		tables         []byte
-		offs, cnts     []int
-	)
-	for _, tag := range dir.Tags {
-		switch tag.Id {
-		case 0x0201: // JPEGInterchangeFormat
-			if v, e := tag.Int(0); e == nil {
-				ileOff = v
-			}
-		case 0x0202: // JPEGInterchangeFormatLength
-			if v, e := tag.Int(0); e == nil {
-				ileLen = v
-			}
-		case 0x0157: // JPEGTables
-			tables = tag.Val
-		case 273: // StripOffsets
-			for i := 0; i < int(tag.Count); i++ {
-				if v, e := tag.Int(i); e == nil {
-					offs = append(offs, v)
-				}
-			}
-		case 279: // StripByteCounts
-			for i := 0; i < int(tag.Count); i++ {
-				if v, e := tag.Int(i); e == nil {
-					cnts = append(cnts, v)
-				}
-			}
-		}
-	}
-
-	var rawJPEG []byte
-	if ileOff > 0 && ileLen > 0 {
-		// Вариант 1: единый JPEG-блок
-		rawJPEG = make([]byte, ileLen)
-		if _, err := f.ReadAt(rawJPEG, int64(ileOff)); err != nil && err != io.EOF {
-			return nil, 0, 0, 0, fmt.Errorf("read JPEGInterchange: %w", err)
-		}
-	} else {
-		// Вариант 2: strip-блоки + таблицы
-		if len(offs) == 0 || len(cnts) == 0 {
-			return nil, 0, 0, 0, fmt.Errorf("not a JPEG-TIFF (missing strips)")
-		}
-		buf := &bytes.Buffer{}
-		buf.Write([]byte{0xFF, 0xD8}) // SOI
-
-		// Вставляем таблицы без своих SOI/EOI
-		if len(tables) >= 4 && tables[0] == 0xFF && tables[1] == 0xD8 {
-			tables = tables[2 : len(tables)-2]
-		}
-		buf.Write(tables)
-
-		// Читаем и пишем подряд все strip-чанки
-		for i, off := range offs {
-			chunk := make([]byte, cnts[i])
-			if _, err := f.ReadAt(chunk, int64(off)); err != nil && err != io.EOF {
-				return nil, 0, 0, 0, fmt.Errorf("read strip %d: %w", i, err)
-			}
-			buf.Write(chunk)
-		}
-		buf.Write([]byte{0xFF, 0xD9}) // EOI
-		rawJPEG = buf.Bytes()
-	}
-
-	// Декодируем JPEG, узнаём размеры
-	img, err := jpeg.Decode(bytes.NewReader(rawJPEG))
-	if err != nil {
-		return nil, 0, 0, 0, fmt.Errorf("jpeg decode: %w", err)
-	}
-	b := img.Bounds()
-	width, height, dpi = b.Dx(), b.Dy(), 300
-
-	// Перекодируем под нужное качество
-	out := &bytes.Buffer{}
-	if err := jpeg.Encode(out, img, &jpeg.Options{Quality: quality}); err != nil {
-		return nil, 0, 0, 0, fmt.Errorf("jpeg encode: %w", err)
-	}
-	return out.Bytes(), width, height, dpi, nil
 }
