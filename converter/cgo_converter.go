@@ -353,7 +353,7 @@ int convert_tiff_to_data(const char* path,
     }
 
     int rc = -1;
-    //ccitt_ready = 0; // exclude CCITT for now
+    //ccitt_ready = 1; // exclude/force CCITT for now
 
     if (ccitt_ready) {
         *ccitt_filter = 1;
