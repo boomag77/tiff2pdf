@@ -262,6 +262,23 @@ int convert_tiff_to_data(const char* path,
         return -2;
     }
 
+    float xres = 0.0f, yres = 0.0f;
+    uint16_t resUnit = RESUNIT_NONE;
+
+    int orig_dpi = 0;
+
+    // RESUNIT_INCH = 2, RESUNIT_CENTIMETER = 3
+    if (TIFFGetField(tif, TIFFTAG_XRESOLUTION, &xres) &&
+        TIFFGetField(tif, TIFFTAG_YRESOLUTION, &yres) &&
+        TIFFGetField(tif, TIFFTAG_RESOLUTIONUNIT, &resUnit)) {
+        if (resUnit == RESUNIT_INCH) {
+            orig_dpi = (int)(xres + 0.5f);
+        } else if (resUnit == RESUNIT_CENTIMETER) {
+            orig_dpi = (int)(xres * 2.54f + 0.5f);
+        }
+    }
+
+
 
     uint32_t* raster = _TIFFmalloc((size_t)orig_width * (size_t)orig_height * sizeof(uint32_t));
     if (!raster) {
@@ -362,7 +379,7 @@ int convert_tiff_to_data(const char* path,
         *outSize = (unsigned long)(width * height);
         *outWidth = width;
         *outHeight = height;
-        *outDpi = dpi;
+        *outDpi = orig_dpi;
         free(rgb);
         _TIFFfree(raster);
         TIFFClose(tif);
@@ -371,11 +388,11 @@ int convert_tiff_to_data(const char* path,
 
     *ccitt_filter = 0;
     *gray_filter = use_gray;
-    rc = write_jpeg_to_mem(width, height, use_gray ? gray : rgb, quality, dpi, use_gray, outBuf, outSize);
+    rc = write_jpeg_to_mem(width, height, use_gray ? gray : rgb, quality, orig_dpi, use_gray, outBuf, outSize);
 
     *outWidth = width;
     *outHeight = height;
-    *outDpi = dpi;
+    *outDpi = orig_dpi;
 
     free(rgb);
     free(gray);
@@ -401,7 +418,7 @@ func ConvertTIFFtoData(path string, quality int, dpi int, scale float64) (data [
 
 	var outBuf *C.uchar
 	var outSize C.ulong
-	var w, h, d C.int
+	var w, h, origDPI C.int
 	var use_ccitt C.int
 	var use_gray C.int
 
@@ -413,8 +430,12 @@ func ConvertTIFFtoData(path string, quality int, dpi int, scale float64) (data [
 		&outBuf, &outSize,
 		&use_ccitt,
 		&use_gray,
-		&w, &h, &d,
+		&w, &h, &origDPI,
 	)
+
+	if origDPI != 300 {
+		fmt.Printf("Warning: DPI is not 300, but %d\n", origDPI)
+	}
 
 	if rc != 0 {
 		C.free(unsafe.Pointer(outBuf))
@@ -423,19 +444,30 @@ func ConvertTIFFtoData(path string, quality int, dpi int, scale float64) (data [
 
 	if use_ccitt == 1 {
 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-		packed := packGrayTo1Bit(goGray, int(w), int(h))
+
+		newWidth := int(w) * dpi / int(origDPI)
+		newHeight := int(h) * dpi / int(origDPI)
+
+		resampled := downsampleGray(goGray, int(w), int(h), newWidth, newHeight)
+		packed := packGrayTo1Bit(resampled, newWidth, newHeight)
+
 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
 
-		ccittData, encodeErr := EncodeRawCCITTG4(packed, int(w), int(h))
+		ccittData, encodeErr := EncodeRawCCITTG4(packed, newWidth, newHeight)
 		if encodeErr != nil {
 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("ccittg4 encode failed: %v", encodeErr)
 		}
 
-		return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), int(d), nil
+		return ccittData, int(use_ccitt), int(use_gray), newWidth, newHeight, dpi, nil
 	}
 	data = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
+
+	newWidth := int(w) * dpi / int(origDPI)
+	newHeight := int(h) * dpi / int(origDPI)
+	resampled := downsampleGray(data, int(w), int(h), newWidth, newHeight)
+
 	C.free(unsafe.Pointer(outBuf))
-	return data, int(use_ccitt), int(use_gray), int(w), int(h), int(d), nil
+	return resampled, int(use_ccitt), int(use_gray), newWidth, newHeight, dpi, nil
 }
 
 func EncodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
@@ -485,6 +517,18 @@ func packGrayTo1Bit(gray []byte, width, height int) []byte {
 		}
 	}
 	return out
+}
+
+func downsampleGray(src []byte, w, h, w2, h2 int) []byte {
+	dst := make([]byte, w2*h2)
+	for y2 := 0; y2 < h2; y2++ {
+		y1 := y2 * h / h2
+		for x2 := 0; x2 < w2; x2++ {
+			x1 := x2 * w / w2
+			dst[y2*w2+x2] = src[y1*w+x1]
+		}
+	}
+	return dst
 }
 
 // // #cgo LDFLAGS: -ltiff -ljpeg -lwebp -lzstd -llzma -ldeflate -ljbig -lLerc -lz
