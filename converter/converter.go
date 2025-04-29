@@ -45,7 +45,6 @@ type convertFolderParam struct {
 	boxConverted string
 	outputDir    string
 	dpi          int
-	scale        float64
 	jpegQuality  int
 }
 
@@ -72,14 +71,14 @@ var imgFormat OutputFormat = jpgFormat
 
 //var jpegQualityC = 100
 
-func convertWorker(taskChan <-chan decodeTiffTask, quality int, dpi int, scale float64, wg *sync.WaitGroup) {
+func convertWorker(taskChan <-chan decodeTiffTask, quality int, dpi int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	// dpi := 300
 
 	for task := range taskChan {
 
-		data, ccitt, gray, width, height, dpi, err := ConvertTIFFtoData(task.filePath, quality, dpi, scale)
+		data, ccitt, gray, width, height, dpi, err := ConvertTIFFtoData(task.filePath, quality, dpi)
 		if err != nil {
 			fmt.Printf("Error encoding JPEG: %v\n", err)
 			continue
@@ -126,7 +125,7 @@ func convertFolder(params convertFolderParam) error {
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go convertWorker(decodeTiffTaskChan, params.jpegQuality, params.dpi, params.scale, wg)
+		go convertWorker(decodeTiffTaskChan, params.jpegQuality, params.dpi, wg)
 	}
 
 	dirName := params.tiffFolder.Name
@@ -358,7 +357,7 @@ func convertFolder(params convertFolderParam) error {
 // 	return nil
 // }
 
-func Convert(boxFolder *BoxFolder, jpegQuality int, dpi int, scale float64) error {
+func Convert(boxFolder *BoxFolder, jpegQuality int, dpi int) error {
 
 	maxConversions := len(boxFolder.FinalizedFolder)
 	sort.SliceStable(boxFolder.FinalizedFolder, func(i, j int) bool {
@@ -387,7 +386,6 @@ func Convert(boxFolder *BoxFolder, jpegQuality int, dpi int, scale float64) erro
 				boxConverted: boxFolder.ConvertedFolder.Path,
 				outputDir:    boxFolder.OutputFolder,
 				dpi:          dpi,
-				scale:        scale,
 				jpegQuality:  jpegQuality,
 			}
 			err := convertFolder(folderParams)

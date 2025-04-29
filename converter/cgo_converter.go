@@ -244,7 +244,7 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
 
 // TIFF → JPEG via RGBA
 int convert_tiff_to_data(const char* path,
-                        int quality, int dpi, double scale,
+                        int quality, int dpi,
                          unsigned char** outBuf, unsigned long* outSize,
                          int* ccitt_filter, int* gray_filter,
                          int* outWidth, int* outHeight, int* outDpi)
@@ -278,6 +278,7 @@ int convert_tiff_to_data(const char* path,
         }
     }
 
+    double resample_scale = (double)dpi / (double)orig_dpi;
 
 
     uint32_t* raster = _TIFFmalloc((size_t)orig_width * (size_t)orig_height * sizeof(uint32_t));
@@ -295,9 +296,9 @@ int convert_tiff_to_data(const char* path,
     int width = orig_width;
     int height = orig_height;
 
-    if (scale != 1.0) {
-        width = (uint32_t)(width * scale);
-        height = (uint32_t)(height * scale);
+    if (resample_scale != 1.0) {
+        width = (uint32_t)(width * resample_scale);
+        height = (uint32_t)(height * resample_scale);
     }
 
     int npixels = width * height;
@@ -333,8 +334,8 @@ int convert_tiff_to_data(const char* path,
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
 
-            dst_x = (int)((x + 0.5) / scale);
-            dst_y = (int)((y + 0.5) / scale);
+            dst_x = (int)((x + 0.5) / resample_scale);
+            dst_y = (int)((y + 0.5) / resample_scale);
 
             if (dst_x >= orig_width) {
                 dst_x = orig_width - 1;
@@ -379,7 +380,7 @@ int convert_tiff_to_data(const char* path,
         *outSize = (unsigned long)(width * height);
         *outWidth = width;
         *outHeight = height;
-        *outDpi = orig_dpi;
+        *outDpi = dpi;
         free(rgb);
         _TIFFfree(raster);
         TIFFClose(tif);
@@ -388,11 +389,11 @@ int convert_tiff_to_data(const char* path,
 
     *ccitt_filter = 0;
     *gray_filter = use_gray;
-    rc = write_jpeg_to_mem(width, height, use_gray ? gray : rgb, quality, orig_dpi, use_gray, outBuf, outSize);
+    rc = write_jpeg_to_mem(width, height, use_gray ? gray : rgb, quality, dpi, use_gray, outBuf, outSize);
 
     *outWidth = width;
     *outHeight = height;
-    *outDpi = orig_dpi;
+    *outDpi = dpi;
 
     free(rgb);
     free(gray);
@@ -408,17 +409,18 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"unsafe"
 )
 
 // ConvertTIFFtoData reads TIFF from file path and returns JPEG-encoded []byte + width, height, dpi
-func ConvertTIFFtoData(path string, quality int, dpi int, scale float64) (data []byte, ccitt int, gray int, width, height, actualDpi int, err error) {
+func ConvertTIFFtoData(path string, quality int, dpi int) (data []byte, ccitt int, gray int, width, height, actualDpi int, err error) {
 	cPath := C.CString(path) // Converts Go string to C string
 	defer C.free(unsafe.Pointer(cPath))
 
 	var outBuf *C.uchar
 	var outSize C.ulong
-	var w, h, origDPI C.int
+	var w, h, d C.int
 	var use_ccitt C.int
 	var use_gray C.int
 
@@ -426,16 +428,11 @@ func ConvertTIFFtoData(path string, quality int, dpi int, scale float64) (data [
 		cPath,
 		C.int(quality),
 		C.int(dpi),
-		C.double(scale),
 		&outBuf, &outSize,
 		&use_ccitt,
 		&use_gray,
-		&w, &h, &origDPI,
+		&w, &h, &d,
 	)
-
-	if origDPI != 300 {
-		fmt.Printf("Warning: DPI is not 300, but %d\n", origDPI)
-	}
 
 	if rc != 0 {
 		C.free(unsafe.Pointer(outBuf))
@@ -445,29 +442,22 @@ func ConvertTIFFtoData(path string, quality int, dpi int, scale float64) (data [
 	if use_ccitt == 1 {
 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
 
-		newWidth := int(w) * dpi / int(origDPI)
-		newHeight := int(h) * dpi / int(origDPI)
-
-		resampled := downsampleGray(goGray, int(w), int(h), newWidth, newHeight)
-		packed := packGrayTo1Bit(resampled, newWidth, newHeight)
+		//filtered := medianFilter(resampled, newWidth, newHeight)
+		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
 
 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
 
-		ccittData, encodeErr := EncodeRawCCITTG4(packed, newWidth, newHeight)
+		ccittData, encodeErr := EncodeRawCCITTG4(packed, int(w), int(h))
 		if encodeErr != nil {
 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("ccittg4 encode failed: %v", encodeErr)
 		}
 
-		return ccittData, int(use_ccitt), int(use_gray), newWidth, newHeight, dpi, nil
+		return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
 	}
 	data = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
 
-	newWidth := int(w) * dpi / int(origDPI)
-	newHeight := int(h) * dpi / int(origDPI)
-	resampled := downsampleGray(data, int(w), int(h), newWidth, newHeight)
-
 	C.free(unsafe.Pointer(outBuf))
-	return resampled, int(use_ccitt), int(use_gray), newWidth, newHeight, dpi, nil
+	return data, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
 }
 
 func EncodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
@@ -514,6 +504,134 @@ func packGrayTo1Bit(gray []byte, width, height int) []byte {
 		// если строка не кратна 8 — записать остаток
 		if bitPos != 7 {
 			out[dstRowStart] = b
+		}
+	}
+	return out
+}
+
+func medianFilter(gray []byte, w, h int) []byte {
+	out := make([]byte, len(gray))
+	copy(out, gray)
+	for y := 1; y < h-1; y++ {
+		for x := 1; x < w-1; x++ {
+			// соберём 3×3 соседей
+			s := gray[(y-1)*w+x-1 : (y+2)*w+x+2]
+			sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+			out[y*w+x] = s[len(s)/2]
+		}
+	}
+	return out
+}
+
+func packGrayTo1BitDither(gray []byte, width, height int) []byte {
+	// Плавающий буфер для накопления ошибок
+	buf := make([]float64, len(gray))
+	for i, v := range gray {
+		buf[i] = float64(v)
+	}
+
+	rowBytes := (width + 7) / 8
+	out := make([]byte, rowBytes*height)
+
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			idx := y*width + x
+			old := buf[idx]
+			var newVal float64
+			var bitVal uint8
+			// порог 128: темнее → чёрный (1), светлее → белый (0)
+			if old < 128 {
+				newVal = 0
+				bitVal = 1
+			} else {
+				newVal = 255
+				bitVal = 0
+			}
+			err := old - newVal
+
+			// упаковываем бит
+			bytePos := y*rowBytes + x/8
+			bitPos := 7 - (x % 8)
+			if bitVal == 1 {
+				out[bytePos] |= 1 << bitPos
+			}
+
+			// распространяем ошибку
+			// Право: 7/16
+			if x+1 < width {
+				buf[idx+1] += err * (7.0 / 16.0)
+			}
+			// Снизу-лево: 3/16
+			if x-1 >= 0 && y+1 < height {
+				buf[(y+1)*width+(x-1)] += err * (3.0 / 16.0)
+			}
+			// Снизу: 5/16
+			if y+1 < height {
+				buf[(y+1)*width+x] += err * (5.0 / 16.0)
+			}
+			// Снизу-право: 1/16
+			if x+1 < width && y+1 < height {
+				buf[(y+1)*width+(x+1)] += err * (1.0 / 16.0)
+			}
+		}
+	}
+
+	return out
+}
+
+// packGrayTo1BitClean делает:
+// 1) простую пороговую бинаризацию (threshold=128)
+// 2) «очистку» изолированных чёрных пикселов (если у пиксела нет чёрных соседей по 4-связности, он становится белым)
+// 3) упаковку в 1-битный MSB2LSB буфер
+func packGrayTo1BitClean(gray []byte, width, height int) []byte {
+	n := width * height
+	bin := make([]uint8, n)
+
+	// 1) Threshold
+	for i := 0; i < n; i++ {
+		if gray[i] < 128 {
+			bin[i] = 1
+		}
+	}
+
+	// 2) Морфологическая очистка: уберём «одинокие» чёрные точки
+	// (одноразовый проход; если нужно – повторить дважды)
+	for y := 1; y < height-1; y++ {
+		base := y * width
+		for x := 1; x < width-1; x++ {
+			idx := base + x
+			if bin[idx] == 1 {
+				// сумма 4-соседей: L, R, U, D
+				sum := bin[idx-1] + bin[idx+1] + bin[idx-width] + bin[idx+width]
+				if sum == 0 {
+					bin[idx] = 0
+				}
+			}
+		}
+	}
+
+	// 3) Упаковка в 1-битный буфер
+	rowBytes := (width + 7) / 8
+	out := make([]byte, rowBytes*height)
+	for y := 0; y < height; y++ {
+		dstRow := y * rowBytes
+		srcRow := y * width
+		var b byte
+		bit := 7
+		for x := 0; x < width; x++ {
+			if bin[srcRow+x] == 1 {
+				b |= 1 << bit
+			}
+			bit--
+			if bit < 0 {
+				out[dstRow] = b
+				dstRow++
+				b = 0
+				bit = 7
+			}
+		}
+		if bit != 7 {
+			out[dstRow] = b
 		}
 	}
 	return out

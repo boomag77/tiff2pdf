@@ -32,10 +32,9 @@ func TestCCITTIntegrationWithRawTIFF(t *testing.T) {
 		// Шаг 1: Конвертация несжатого TIFF в CCITT данные
 		quality := 85
 		dpi := 300
-		scale := 1.0
 
 		// Вызываем конвертер
-		data, ccitt, gray, width, height, actualDpi, err := converter.ConvertTIFFtoData(testTiffPath, quality, dpi, scale)
+		data, ccitt, gray, width, height, actualDpi, err := converter.ConvertTIFFtoData(testTiffPath, quality, dpi)
 		if err != nil {
 			t.Fatalf("Failed to convert TIFF to data: %v", err)
 		}

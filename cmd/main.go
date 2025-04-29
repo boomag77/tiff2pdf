@@ -17,16 +17,11 @@ func main() {
 	inputRootDir := flag.String("input", "", "Input directory containing TIFF files")
 	outputDir := flag.String("output", "", "Output directory for converted files")
 	dpi := flag.Int("dpi", 300, "DPI")
-	scale := flag.Float64("scale", 1.0, "Sacale")
 	jpegQuality := flag.Int("quality", 100, "JPEG quality (1-100)")
 	flag.Parse()
 
 	if *dpi < 72 || *dpi > 300 {
 		*dpi = 300
-	}
-
-	if *scale < 0.1 || *scale > 1 {
-		*scale = 1
 	}
 
 	if *jpegQuality < 1 || *jpegQuality > 100 {
@@ -37,7 +32,6 @@ func main() {
 		InputRootDir: *inputRootDir,
 		OutputDir:    *outputDir,
 		Dpi:          *dpi,
-		Scale:        *scale,
 		JpegQuality:  *jpegQuality,
 	}
 
@@ -51,7 +45,7 @@ func main() {
 	}
 	boxFolder.OutputFolder = args.OutputDir
 
-	if err := converter.Convert(boxFolder, args.JpegQuality, args.Dpi, args.Scale); err != nil {
+	if err := converter.Convert(boxFolder, args.JpegQuality, args.Dpi); err != nil {
 		fmt.Printf("Error during conversion: %v\n", err)
 		os.Exit(1)
 	}
