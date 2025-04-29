@@ -442,7 +442,7 @@ func ConvertTIFFtoData(path string, quality int, dpi int) (data []byte, ccitt in
 	if use_ccitt == 1 {
 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
 
-		//filtered := medianFilter(resampled, newWidth, newHeight)
+		//filtered := medianFilterLight(goGray, int(w), int(h))
 		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
 
 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
@@ -518,6 +518,32 @@ func medianFilter(gray []byte, w, h int) []byte {
 			s := gray[(y-1)*w+x-1 : (y+2)*w+x+2]
 			sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
 			out[y*w+x] = s[len(s)/2]
+		}
+	}
+	return out
+}
+
+func medianFilterLight(gray []byte, w, h int) []byte {
+	out := make([]byte, len(gray))
+	copy(out, gray)
+	var win [9]byte
+
+	for y := 1; y < h-1; y++ {
+		base := y * w
+		for x := 1; x < w-1; x++ {
+			// Собираем 9 соседей
+			idx := 0
+			for dy := -1; dy <= 1; dy++ {
+				row := (y+dy)*w + x - 1
+				win[idx+0] = gray[row+0]
+				win[idx+1] = gray[row+1]
+				win[idx+2] = gray[row+2]
+				idx += 3
+			}
+			// Сортируем 9 элементов
+			sort.Slice(win[:], func(i, j int) bool { return win[i] < win[j] })
+			// Средний элемент
+			out[base+x] = win[4]
 		}
 	}
 	return out

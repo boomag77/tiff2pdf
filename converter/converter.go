@@ -2,7 +2,9 @@ package converter
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	//"exec"
 	"path/filepath"
@@ -109,6 +111,7 @@ func convertWorker(taskChan <-chan decodeTiffTask, quality int, dpi int, wg *syn
 }
 
 func convertFolder(params convertFolderParam) error {
+	var pdfPageCount int = 0
 	startTime := time.Now()
 
 	if len(params.tiffFolder.TiffFilesPaths) == 0 {
@@ -128,22 +131,34 @@ func convertFolder(params convertFolderParam) error {
 		go convertWorker(decodeTiffTaskChan, params.jpegQuality, params.dpi, wg)
 	}
 
-	dirName := params.tiffFolder.Name
-	pdfFilePath := filepath.Join(params.outputDir, dirName+".pdf")
-	//secPdfFilePath := filepath.Join(params.boxConverted, dirName+".pdf")
+	dirName := strings.TrimSuffix(params.tiffFolder.Name, "-2") // pdf file name = tiff files folder name
 
-	pdfFile, err := os.Create(pdfFilePath)
+	tmpFilePathOut := filepath.Join(params.outputDir, dirName+".tmp")
+	tmpFilePathConv := filepath.Join(params.boxConverted, dirName+".tmp")
+
+	pdfFilePathOut := filepath.Join(params.outputDir, dirName+".pdf")
+	pdfFilePathConv := filepath.Join(params.boxConverted, dirName+".pdf")
+
+	tmpFileOut, err := os.Create(tmpFilePathOut)
 	if err != nil {
-		return fmt.Errorf("error creating PDF file at output: %v", err)
+		return fmt.Errorf("error creating TMP file at output: %v", err)
 	}
-	defer pdfFile.Close()
-	// convertedPdfFile, err := os.Create(secPdfFilePath)
-	// if err != nil {
-	// 	return fmt.Errorf("error creating PDF file at Converted: %v", err)
-	// }
-	// defer convertedPdfFile.Close()
 
-	pdfWriter, _ := pdf_writer.NewPDFWriter(pdfFile)
+	tmpFileConv, err := os.Create(tmpFilePathConv)
+	if err != nil {
+		return fmt.Errorf("error creating PDF file at Converted: %v", err)
+	}
+
+	defer func() {
+		if err != nil {
+			os.Remove(tmpFilePathOut)
+			os.Remove(tmpFilePathConv)
+		}
+	}()
+
+	multipleWriter := io.MultiWriter(tmpFileOut, tmpFileConv)
+
+	pdfWriter, _ := pdf_writer.NewPDFWriter(multipleWriter)
 	// TODO : add error handling for pdfWriter
 
 	resultsBuffer := make(map[int]convertResult, filesCount)
@@ -164,24 +179,36 @@ func convertFolder(params convertFolderParam) error {
 				}
 
 				if result.ccitt {
-					pdfWriter.WriteCCITTImage(
+					if err := pdfWriter.WriteCCITTImage(
 						result.pixelWidth,
 						result.pixelHeight,
 						result.imgBuffer,
-					)
+					); err == nil {
+						pdfPageCount++
+					} else {
+						fmt.Printf("Error writing CCITT image: %v\n", err)
+					}
 				} else {
 					if result.gray {
-						pdfWriter.WriteGrayJPEGImage(
+						if err := pdfWriter.WriteGrayJPEGImage(
 							result.pixelWidth,
 							result.pixelHeight,
 							result.imgBuffer,
-						)
+						); err == nil {
+							pdfPageCount++
+						} else {
+							fmt.Printf("Error writing grayscale image: %v\n", err)
+						}
 					} else {
-						pdfWriter.WriteRGBJPEGImage(
+						if err := pdfWriter.WriteRGBJPEGImage(
 							result.pixelWidth,
 							result.pixelHeight,
 							result.imgBuffer,
-						)
+						); err == nil {
+							pdfPageCount++
+						} else {
+							fmt.Printf("Error writing RGB image: %v\n", err)
+						}
 					}
 				}
 
@@ -211,16 +238,47 @@ func convertFolder(params convertFolderParam) error {
 		return fmt.Errorf("error writing PDF file to output folder: %v", err)
 	}
 
-	var startSyncTime time.Time = time.Now()
-
-	if err := pdfFile.Sync(); err != nil {
-		return fmt.Errorf("error syncing PDF file to output filder: %v", err)
+	if err := tmpFileOut.Sync(); err != nil {
+		return fmt.Errorf("error syncing TMP file to output filder: %v", err)
 	}
-	fmt.Println("PDF file synced to Converted folder with time: " + time.Since(startSyncTime).String())
+	if err := tmpFileOut.Close(); err != nil {
+		return fmt.Errorf("error closing TMP file to output filder: %v", err)
+	}
+
+	if err := tmpFileConv.Sync(); err != nil {
+		return fmt.Errorf("error syncing TMP file to Converted: %v", err)
+	}
+	if err := tmpFileConv.Close(); err != nil {
+		return fmt.Errorf("error closing TMP file to Converted: %v", err)
+	}
+
+	dirOut, err := os.Open(params.outputDir)
+	if err != nil {
+		return fmt.Errorf("error opening output directory: %v", err)
+	}
+	if err := dirOut.Sync(); err != nil {
+		return fmt.Errorf("error syncing output directory: %v", err)
+	}
+	dirOut.Close()
+	dirConv, err := os.Open(params.boxConverted)
+	if err != nil {
+		return fmt.Errorf("error opening Converted directory: %v", err)
+	}
+	if err := dirConv.Sync(); err != nil {
+		return fmt.Errorf("error syncing Converted directory: %v", err)
+	}
+	dirConv.Close()
+
+	if err := os.Rename(tmpFilePathOut, pdfFilePathOut); err != nil {
+		return fmt.Errorf("error renaming TMP file to PDF at output folder: %v", err)
+	}
+	if err := os.Rename(tmpFilePathConv, pdfFilePathConv); err != nil {
+		return fmt.Errorf("error renaming TMP file to PDF at Converted folder: %v", err)
+	}
 
 	endTime := time.Since(startTime)
 	fmt.Println("Folder " + dirName + " - " + fmt.Sprint(len(params.tiffFolder.TiffFilesPaths)) +
-		" files converted to PDF with " + fmt.Sprint(1) + " pages. With time: " + endTime.String())
+		" files converted to PDF with " + fmt.Sprint(pdfPageCount) + " pages. With time: " + endTime.String())
 	return nil
 }
 
