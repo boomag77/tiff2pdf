@@ -11,6 +11,7 @@ package converter
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <string.h>
 #include <tiffio.h>
 #include <jpeglib.h>
@@ -26,7 +27,7 @@ package converter
 #define JPEGCOLORMODE_RGB     1
 #endif
 
-#define GRAY_THRESHOLD 8
+#define GRAY_THRESHOLD 2
 
 typedef struct {
     unsigned char *data;
@@ -260,6 +261,8 @@ int convert_tiff_to_data(const char* path,
                          int* outWidth, int* outHeight, int* outDpi)
 {
 
+
+
     TIFF* tif = TIFFOpen(path, "r");
     if (!tif) return -1;
 
@@ -288,11 +291,13 @@ int convert_tiff_to_data(const char* path,
         }
     }
 
+
+
     if (orig_dpi == 0) {
         orig_dpi = dpi;
     }
+    bool need_resample = (dpi != orig_dpi);
 
-    double resample_scale = (double)dpi / (double)orig_dpi;
 
 
     uint32_t* raster = _TIFFmalloc((size_t)orig_width * (size_t)orig_height * sizeof(uint32_t));
@@ -310,9 +315,15 @@ int convert_tiff_to_data(const char* path,
     int width = orig_width;
     int height = orig_height;
 
-    if (resample_scale != 1.0) {
-        width = (uint32_t)(width * resample_scale);
-        height = (uint32_t)(height * resample_scale);
+    double resample_scale = 1.0;
+
+    // bicubic
+    if (need_resample) {
+        resample_scale = (double)dpi / (double)orig_dpi;
+        uint32_t new_width  = (uint32_t)(orig_width  * resample_scale + 0.5);
+        uint32_t new_height = (uint32_t)(orig_height * resample_scale + 0.5);
+        width  = new_width;
+        height = new_height;
     }
 
     int npixels = width * height;
@@ -325,6 +336,7 @@ int convert_tiff_to_data(const char* path,
 
     uint8_t* rgb = malloc(npixels * 3);
     if (!rgb) {
+        fprintf(stderr, "malloc(rgb) failed: %d bytes\n", npixels * 3);
         _TIFFfree(raster);
         TIFFClose(tif);
         return -6;
@@ -338,46 +350,91 @@ int convert_tiff_to_data(const char* path,
         return -7;
     }
 
-    int dst, dst_x, dst_y;
+    int dst;
+    //int dst_x, dst_y;
     uint32_t px;
     uint8_t r, g, b;
 
     int graycount = 0;
     int px_index;
 
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
+    if (need_resample) {
+        // bicubic resampling
+        for (int y = 0; y < height; y++) {
+            double fy = y / resample_scale;
+            int    y0 = (int)floor(fy);
+            double wy = fy - y0;
+            if (y0 < 0)       { y0 = 0;    wy = 0; }
+            if (y0 >= orig_height-1) { y0 = orig_height-2; wy = 1; }
+            int y1 = y0 + 1;
 
-            dst_x = (int)((x + 0.5) / resample_scale);
-            dst_y = (int)((y + 0.5) / resample_scale);
+            for (int x = 0; x < width; x++) {
+                double fx = x / resample_scale;
+                int    x0 = (int)floor(fx);
+                double wx = fx - x0;
+                if (x0 < 0)      { x0 = 0;    wx = 0; }
+                if (x0 >= orig_width-1)  { x0 = orig_width-2;  wx = 1; }
+                int x1 = x0 + 1;
 
-            if (dst_x >= orig_width) {
-                dst_x = orig_width - 1;
+                // четыре пикселя вокруг источника
+                uint32_t p00 = raster[y0*orig_width + x0];
+                uint32_t p10 = raster[y0*orig_width + x1];
+                uint32_t p01 = raster[y1*orig_width + x0];
+                uint32_t p11 = raster[y1*orig_width + x1];
+
+                // извлекаем каналы
+                uint8_t r00 = TIFFGetR(p00), g00 = TIFFGetG(p00), b00 = TIFFGetB(p00);
+                uint8_t r10 = TIFFGetR(p10), g10 = TIFFGetG(p10), b10 = TIFFGetB(p10);
+                uint8_t r01 = TIFFGetR(p01), g01 = TIFFGetG(p01), b01 = TIFFGetB(p01);
+                uint8_t r11 = TIFFGetR(p11), g11 = TIFFGetG(p11), b11 = TIFFGetB(p11);
+
+                // линейная интерполяция по X
+                double r0 = r00*(1-wx) + r10*wx;
+                double g0 = g00*(1-wx) + g10*wx;
+                double b0 = b00*(1-wx) + b10*wx;
+                double r1 = r01*(1-wx) + r11*wx;
+                double g1 = g01*(1-wx) + g11*wx;
+                double b1 = b01*(1-wx) + b11*wx;
+
+                // линейная интерполяция по Y
+                uint8_t rf = (uint8_t)(r0*(1-wy) + r1*wy + 0.5);
+                uint8_t gf = (uint8_t)(g0*(1-wy) + g1*wy + 0.5);
+                uint8_t bf = (uint8_t)(b0*(1-wy) + b1*wy + 0.5);
+
+                px_index = y*width + x;
+                rgb[px_index*3 + 0] = rf;
+                rgb[px_index*3 + 1] = gf;
+                rgb[px_index*3 + 2] = bf;
+                if (abs(rf-gf) < GRAY_THRESHOLD && abs(rf-bf) < GRAY_THRESHOLD && abs(gf-bf) < GRAY_THRESHOLD) {
+                    graycount++;
+                }
             }
-            if (dst_y >= orig_height) {
-                dst_y = orig_height - 1;
+        }
+    } else {
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+
+                px = raster[y * orig_width + x];
+                px_index = y * width + x;
+
+                dst = px_index * 3;
+
+                r = TIFFGetR(px);
+                g = TIFFGetG(px);
+                b = TIFFGetB(px);
+                rgb[dst + 0] = r;
+                rgb[dst + 1] = g;
+                rgb[dst + 2] = b;
+                if (abs(r-g) < GRAY_THRESHOLD && abs(r-b) < GRAY_THRESHOLD && abs(g-b) < GRAY_THRESHOLD) {
+                    graycount++;
+                }
             }
-            px = raster[dst_y * orig_width + dst_x];
-            px_index = y * width + x;
-
-            dst = px_index * 3;
-
-            r = TIFFGetR(px);
-            g = TIFFGetG(px);
-            b = TIFFGetB(px);
-            rgb[dst + 0] = r;
-            rgb[dst + 1] = g;
-            rgb[dst + 2] = b;
-            if (abs(r-g) < GRAY_THRESHOLD && abs(r-b) < GRAY_THRESHOLD && abs(g-b) < GRAY_THRESHOLD) {
-                graycount++;
-            }
-            //gray[px_index] = (uint8_t)((r * 30 + g * 59 + b * 11) / 100);
-
         }
     }
 
+
     double gray_ratio = (double)graycount / (double)(npixels);
-    int use_gray = (gray_ratio > 0.9);
+    bool use_gray = (gray_ratio > 0.9);
 
     int ccitt_ready = 0;
     if (use_gray) {
