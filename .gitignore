@@ -16,3 +16,5 @@ bin/
 keys/
 deps/
 out/
+ccittg4/
+integration_tests/

@@ -1,13 +1,3 @@
-//go:build cgo
-// +build cgo
-
-package converter
-
-/*
-
-#cgo LDFLAGS: -ljpeg -ltiff
-
-
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -28,7 +18,7 @@ package converter
 #define JPEGCOLORMODE_RGB     1
 #endif
 
-#define GRAY_THRESHOLD 8
+#define GRAY_THRESHOLD 2
 #define GRAY_RATIO 0.9
 
 typedef struct {
@@ -150,7 +140,7 @@ int EncodeRawG4(
 }
 
 
-void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccitt_ready) {
+void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, int* ccitt_ready) {
     // const __m128i coeff_r = _mm_set1_epi16(30); // --
     // const __m128i coeff_g = _mm_set1_epi16(59); // --
     // const __m128i coeff_b = _mm_set1_epi16(11); // --
@@ -206,9 +196,9 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccit
     }
     double bad_ratio = (double)bad_count / (double)(npixels);
     if (bad_ratio < 0.05) {
-        *ccitt_ready = true;
+        *ccitt_ready = 1;
     } else {
-        *ccitt_ready = false;
+        *ccitt_ready = 0;
     }
 
 }
@@ -234,7 +224,7 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
 
     jpeg_set_defaults(&cinfo);
     jpeg_set_quality(&cinfo, quality, TRUE);
-    //jpeg_simple_progression(&cinfo);
+    jpeg_simple_progression(&cinfo);
     cinfo.density_unit = 1;
     cinfo.X_density = dpi;
     cinfo.Y_density = dpi;
@@ -256,22 +246,19 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
 
-    if (!gray) {
-        printf("JPEG: width: %d, height %d, quality %d, dpi %d\n", width, height, quality, dpi);}
-
     return 0;
 }
 
 // TIFF → JPEG via RGBA
 int read_raster(const char* path,
-                uint32_t** raster, uint16_t* orig_dpi, size_t* orig_width, size_t* orig_height)
+                uint32_t** raster, uint16_t* orig_dpi, uint32_t* orig_width, uint32_t* orig_height)
 {
     TIFF* tif = TIFFOpen(path, "r");
     if (!tif) return -1;
 
     TIFFSetWarningHandler(NULL);
 
-    size_t width = 0, height = 0;
+    uint32_t width = 0, height = 0;
 
     if (!TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &width) ||
         !TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &height)) {
@@ -318,19 +305,19 @@ int read_raster(const char* path,
 }
 
 // read pixels to rgb
-int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
+int read_pxls_from_raster(uint32_t* raster, const size_t width, const size_t height,
                         uint8_t** pxls_buff, bool* gray, bool* ccitt_ready)
 {
     if (!raster || !pxls_buff || !gray || !ccitt_ready) {
         return -1;
     }
-    if ((*width) == 0 || (*height) == 0) {
+    if (width == 0 || height == 0) {
         return -2;
     }
-    if ((*width) > SIZE_MAX / (*height)) {
+    if (width > SIZE_MAX / height) {
         return -3;
     }
-    size_t npixels = (*width) * (*height);
+    size_t npixels = width * height;
 
     if (npixels > SIZE_MAX / 3) {
         return -4;
@@ -345,11 +332,11 @@ int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
         return -5;
     }
 
-    for (size_t y = 0; y < (*height); y++) {
-        for (size_t x = 0; x < (*width); x++) {
+    for (size_t y = 0; y < height; y++) {
+        for (size_t x = 0; x < width; x++) {
 
-            px = raster[y * (*width) + x];
-            dst = (y * (*width) + x) * 3;
+            px = raster[y * width + x];
+            dst = (y * width + x) * 3;
 
             r = TIFFGetR(px);
             g = TIFFGetG(px);
@@ -390,7 +377,7 @@ int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
 
 // read pixels to rgb_resampled
 int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* height,
-                                    uint8_t** pxls_buff, bool* gray, bool* ccitt_ready,
+                                    uint8_t** pxls_buff, bool* gray, bool* ccitt_ready, 
                                     int target_dpi, int orig_dpi)
 {
     if (!raster || !pxls_buff || !gray || !ccitt_ready) {
@@ -504,7 +491,7 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
     *pxls_buff = rgb_resampled;
     *gray = false;
     *ccitt_ready = false;
-
+    
     return 0;
 }
 
@@ -513,14 +500,14 @@ int convert_tiff_to_data(const char* path,
                         int rgb_quality, int gray_quality,
                         int rgb_target_dpi, int gray_target_dpi,
                          unsigned char** outBuf, unsigned long* outSize,
-                         int* ccitt_filter, bool* gray_filter,
-                         size_t* outWidth, size_t* outHeight, int* outDpi)
+                         int* ccitt_filter, int* gray_filter,
+                         int* outWidth, int* outHeight, int* outDpi)
 {
 
     int rc = 0;
 
     uint16_t orig_dpi = 0;
-    size_t orig_width = 0, orig_height = 0;
+    uint32_t orig_width = 0, orig_height = 0;
     uint32_t* raster;
 
     rc = read_raster(path, &raster, &orig_dpi, &orig_width, &orig_height);
@@ -528,8 +515,8 @@ int convert_tiff_to_data(const char* path,
         return rc;
     }
 
-    size_t width = orig_width;
-    size_t height = orig_height;
+    uint32_t width = orig_width;
+    uint32_t height = orig_height;
 
 
     if (orig_dpi == 0) {
@@ -542,11 +529,7 @@ int convert_tiff_to_data(const char* path,
     bool gray = false;
     bool ccitt_ready = false;
 
-    rc = read_pxls_from_raster(raster, &width, &height, &pixel_buffer, &gray, &ccitt_ready);
-    if (!gray) {
-        printf("read_pxls_from_raster rc: height: %zu, width: %zu, gray: %d, ccitt_ready: %d\n", height, width, gray, ccitt_ready);
-    }
-
+    rc = read_pxls_from_raster(raster, width, height, &pixel_buffer, &gray, &ccitt_ready);
     if (rc != 0) {
         if (raster != NULL) {
             free(raster);
@@ -576,7 +559,6 @@ int convert_tiff_to_data(const char* path,
             uint8_t* rgb_buff = NULL;
             rc = read_pxls_resampled_from_raster(raster, &width, &height, &rgb_buff, &gray, &ccitt_ready,
                                                  rgb_target_dpi, orig_dpi);
-            printf("read_pxls_resampled_from_raster rc: height: %zu, width: %zu, gray: %d, ccitt_ready: %d\n", height, width, gray, ccitt_ready);
             if (rc != 0) {
                 free(raster);
                 free(pixel_buffer);
@@ -605,7 +587,7 @@ int convert_tiff_to_data(const char* path,
 
     if (ccitt_ready) {
         *ccitt_filter = 1;
-        *gray_filter = false;
+        *gray_filter = 0;
         *outBuf = pixel_buffer;
         *outSize = (unsigned long)(width * height);
         *outWidth = width;
@@ -616,9 +598,9 @@ int convert_tiff_to_data(const char* path,
     }
 
     *ccitt_filter = 0;
-    *gray_filter = gray ? true : false;
+    *gray_filter = gray ? 1 : 0;
     if (!gray) {
-        rc = write_jpeg_to_mem(width, height, pixel_buffer, rgb_quality, rgb_target_dpi, gray, outBuf, outSize);
+        rc = write_jpeg_to_mem(width, height, pixel_buffer, rgb_quality, rgb_target_dpi, !gray, outBuf, outSize);
         *outDpi = rgb_target_dpi;
     } else {
         rc = write_jpeg_to_mem(width, height, pixel_buffer, gray_quality, gray_target_dpi, gray, outBuf, outSize);
@@ -644,8 +626,8 @@ int get_compression_type(const char* path) {
 int ExtractCCITTRaw(const char* path,
                     unsigned char** outBuf,
                     unsigned long* outSize,
-                    size_t* width,
-                    size_t* height)
+                    int* width,
+                    int* height)
 {
     TIFF* tif = TIFFOpen(path, "r");
     if (!tif) return -1;
@@ -689,227 +671,7 @@ int ExtractCCITTRaw(const char* path,
 
     *outBuf  = buf;
     *outSize = total;
-    *width   = (size_t)w;
-    *height  = (size_t)h;
+    *width   = (int)w;
+    *height  = (int)h;
     return 0;
 }
-
-*/
-import "C"
-import (
-	"errors"
-	"fmt"
-	"unsafe"
-)
-
-type ImageData struct {
-	Data      []byte
-	CCITT     int
-	Gray      bool
-	Width     int
-	Height    int
-	ActualDpi int
-}
-
-func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error) {
-
-	cPath := C.CString(path) // Converts Go string to C string
-	defer func() {
-		if cPath != nil {
-			C.free(unsafe.Pointer(cPath))
-		}
-	}()
-
-	var outBuf *C.uchar
-	var outSize C.ulong
-	var w, h C.size_t
-	var d C.int
-	var use_ccitt C.int
-	var use_gray C.bool
-
-	comp := C.get_compression_type(cPath)
-	if comp == 2 || comp == 3 || comp == 4 {
-		// CCITT
-		ccitt := 1
-		rc := C.ExtractCCITTRaw(
-			cPath,
-			&outBuf, &outSize,
-			&w, &h)
-		if rc != 0 {
-			C.free(unsafe.Pointer(outBuf))
-			return ImageData{}, fmt.Errorf("ExtractCCITTRaw failed with code %d", int(rc))
-		}
-		data := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-		if outBuf != nil {
-			C.free(unsafe.Pointer(outBuf))
-		}
-		return ImageData{
-			Data:   data,
-			CCITT:  ccitt,
-			Gray:   false,
-			Width:  int(w),
-			Height: int(h),
-		}, nil
-	}
-
-	rc := C.convert_tiff_to_data(
-		cPath,
-		C.int(convParams.targetRGBjpegQuality),
-		C.int(convParams.targetGrayjpegQuality),
-		C.int(convParams.targetRGBdpi),
-		C.int(convParams.targetGraydpi),
-		&outBuf, &outSize,
-		&use_ccitt,
-		&use_gray,
-		&w, &h, &d,
-	)
-	if rc != 0 {
-		if outBuf != nil {
-			C.free(unsafe.Pointer(outBuf))
-		}
-		return ImageData{}, fmt.Errorf("convert_tiff_to_data failed with code %d", int(rc))
-	}
-
-	if use_ccitt == 1 {
-		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-
-		//filtered := medianFilterLight(goGray, int(w), int(h))
-		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
-
-		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
-
-		ccittData, encodeErr := EncodeRawCCITTG4(packed, int(w), int(h))
-		if encodeErr != nil {
-			return ImageData{}, fmt.Errorf("ccittg4 encode failed: %v", encodeErr)
-		}
-
-		return ImageData{
-			Data:      ccittData,
-			CCITT:     int(use_ccitt),
-			Gray:      bool(use_gray),
-			Width:     int(w),
-			Height:    int(h),
-			ActualDpi: convParams.targetGraydpi,
-		}, nil
-		//return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
-	}
-
-	data := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-
-	if outBuf != nil {
-		C.free(unsafe.Pointer(outBuf))
-	}
-
-	var actDPI int = 0
-	if use_gray {
-		actDPI = convParams.targetGraydpi
-	} else {
-		actDPI = convParams.targetRGBdpi
-	}
-
-	return ImageData{
-		Data:      data,
-		CCITT:     int(use_ccitt),
-		Gray:      bool(use_gray),
-		Width:     int(w),
-		Height:    int(h),
-		ActualDpi: actDPI,
-	}, nil
-}
-
-// ConvertTIFFtoData reads TIFF from file path and returns JPEG-encoded []byte + width, height, dpi
-// func ConvertTIFFtoData(path string, quality int, dpi int) (data []byte, ccitt int, gray int, width, height, actualDpi int, err error) {
-// 	cPath := C.CString(path) // Converts Go string to C string
-// 	defer func() {
-// 		if cPath != nil {
-// 			C.free(unsafe.Pointer(cPath))
-// 		}
-// 	}()
-
-// 	var outBuf *C.uchar
-// 	var outSize C.ulong
-// 	var w, h, d C.int
-// 	var use_ccitt C.int
-// 	var use_gray C.int
-
-// 	comp := C.get_compression_type(cPath)
-// 	if comp == 2 || comp == 3 || comp == 4 {
-// 		// CCITT
-// 		ccitt := 1
-// 		rc := C.ExtractCCITTRaw(
-// 			cPath,
-// 			&outBuf, &outSize,
-// 			&w, &h)
-// 		if rc != 0 {
-// 			C.free(unsafe.Pointer(outBuf))
-// 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("ExtractCCITTRaw failed with code %d", int(rc))
-// 		}
-// 		data = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-// 		if outBuf != nil {
-// 			C.free(unsafe.Pointer(outBuf))
-// 		}
-// 		return data, ccitt, 0, int(w), int(h), dpi, nil
-// 	}
-
-// 	rc := C.convert_tiff_to_data(
-// 		cPath,
-// 		C.int(quality),
-// 		C.int(dpi),
-// 		&outBuf, &outSize,
-// 		&use_ccitt,
-// 		&use_gray,
-// 		&w, &h, &d,
-// 	)
-
-// 	if rc != 0 {
-// 		if outBuf != nil {
-// 			C.free(unsafe.Pointer(outBuf))
-// 		}
-// 		return nil, 0, 0, 0, 0, 0, fmt.Errorf("convert_tiff_to_data failed with code %d", int(rc))
-// 	}
-
-// 	if use_ccitt == 1 {
-// 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-
-// 		//filtered := medianFilterLight(goGray, int(w), int(h))
-// 		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
-
-// 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
-
-// 		ccittData, encodeErr := EncodeRawCCITTG4(packed, int(w), int(h))
-// 		if encodeErr != nil {
-// 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("ccittg4 encode failed: %v", encodeErr)
-// 		}
-
-// 		return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
-// 	}
-
-// 	data = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-
-// 	if outBuf != nil {
-// 		C.free(unsafe.Pointer(outBuf))
-// 	}
-// 	return data, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
-// }
-
-func EncodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
-	if len(bits) != ((width+7)/8)*height {
-		return nil, errors.New("invalid packed bits length")
-	}
-	var outPtr *C.uchar
-	var outSize C.long
-	ret := C.EncodeRawG4(
-		(*C.uchar)(unsafe.Pointer(&bits[0])),
-		C.int(width), C.int(height),
-		&outPtr, &outSize,
-	)
-	if ret != 0 {
-		return nil, errors.New("libtiff CCITT-G4 encode failed")
-	}
-	defer C.free(unsafe.Pointer(outPtr))
-	return C.GoBytes(unsafe.Pointer(outPtr), C.int(outSize)), nil
-}
-
-// // #cgo LDFLAGS: -ltiff -ljpeg -lwebp -lzstd -llzma -ldeflate -ljbig -lLerc -lz
-// #cgo LDFLAGS: -static -ljpeg -ltiff
-//#cgo LDFLAGS: -ljpeg -ltiff

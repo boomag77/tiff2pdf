@@ -108,6 +108,7 @@ func (pw *PDFWriter) WriteRGBJPEGImage(width int, height int, data []byte) error
 	pw.bw.WriteString(fmt.Sprintf("/Width %d\n/Height %d\n", width, height))
 	pw.bw.WriteString("/ColorSpace /DeviceRGB\n/BitsPerComponent 8\n")
 	pw.bw.WriteString("/Filter /DCTDecode\n")
+
 	pw.bw.WriteString(fmt.Sprintf("/Length %d\n", len(data)))
 	pw.bw.WriteString(">>\nstream\n")
 	pw.bw.Write(data)
