@@ -28,7 +28,7 @@ package converter
 #define JPEGCOLORMODE_RGB     1
 #endif
 
-#define GRAY_THRESHOLD 8
+#define GRAY_THRESHOLD 2
 #define GRAY_RATIO 0.9
 
 typedef struct {
@@ -215,7 +215,7 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccit
 
 // JPEG encoder from RGBA → JPEG memory
 int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
-                      int quality, int dpi, int gray,
+                      int quality, int dpi, bool gray,
                       unsigned char** out, unsigned long* outSize) {
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
@@ -255,9 +255,6 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
     }
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
-
-    if (!gray) {
-        printf("JPEG: width: %d, height %d, quality %d, dpi %d\n", width, height, quality, dpi);}
 
     return 0;
 }
@@ -531,33 +528,25 @@ int convert_tiff_to_data(const char* path,
     size_t width = orig_width;
     size_t height = orig_height;
 
-
-    if (orig_dpi == 0) {
-        orig_dpi = 300;
-    }
-    bool rgb_need_resample = (rgb_target_dpi != orig_dpi);
-    bool gray_need_resample = (gray_target_dpi != orig_dpi);
-
     uint8_t* pixel_buffer = NULL;
     bool gray = false;
     bool ccitt_ready = false;
 
     rc = read_pxls_from_raster(raster, &width, &height, &pixel_buffer, &gray, &ccitt_ready);
-    if (!gray) {
-        printf("read_pxls_from_raster rc: height: %zu, width: %zu, gray: %d, ccitt_ready: %d\n", height, width, gray, ccitt_ready);
-    }
-
     if (rc != 0) {
-        if (raster != NULL) {
-            free(raster);
-            raster = NULL;
-        }
-        if (pixel_buffer != NULL) {
-            free(pixel_buffer);
-            pixel_buffer = NULL;
-        }
+        free(raster);
+        free(pixel_buffer);
         return rc;
     }
+
+    if (orig_dpi == 0) {
+        orig_dpi = gray ? gray_target_dpi : rgb_target_dpi;
+    }
+
+    bool rgb_need_resample = (rgb_target_dpi != orig_dpi);
+    bool gray_need_resample = (gray_target_dpi != orig_dpi);
+
+
     if (gray) {
         if (gray_need_resample) {
             uint8_t* gray_buff = NULL;
