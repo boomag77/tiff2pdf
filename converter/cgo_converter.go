@@ -83,10 +83,10 @@ static void    unmapCallback(thandle_t h, tdata_t p, toff_t n) {}
 // Генерируем **только** сырые G4-данные (payload), без TIFF-заголовка:
 int EncodeRawG4(
     unsigned char *bits1,
-    int             width,
-    int             height,
-    unsigned char **outBuf,
-    long           *outSize
+    size_t          width,
+    size_t          height,
+    unsigned char   **outBuf,
+    unsigned long   *outSize
 ) {
     MemBuf mb = { .data = NULL, .cap = 0, .size = 0, .off = 0 };
 
@@ -119,7 +119,7 @@ int EncodeRawG4(
 
     // Перед кодированием G4 убедимся, что off == size (обычно 0)
     seekCallback((thandle_t)&mb, 0, SEEK_END);
-    long payloadStart = mb.size;
+    unsigned long payloadStart = mb.size;
 
     // Записываем один strip — libtiff выполнит G4-кодирование
     tsize_t stripSize = TIFFWriteEncodedStrip(
@@ -136,7 +136,7 @@ int EncodeRawG4(
     }
 
     // Выделяем payload: именно тот блок, что libtiff добавил после payloadStart
-    long payloadLen = mb.size - payloadStart;
+    unsigned long payloadLen = mb.size - payloadStart;
     *outBuf  = (unsigned char*)malloc(payloadLen);
     if (!*outBuf) {
         free(mb.data);
@@ -150,7 +150,7 @@ int EncodeRawG4(
 }
 
 
-void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccitt_ready) {
+void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* ccitt_ready) {
     // const __m128i coeff_r = _mm_set1_epi16(30); // --
     // const __m128i coeff_g = _mm_set1_epi16(59); // --
     // const __m128i coeff_b = _mm_set1_epi16(11); // --
@@ -159,11 +159,10 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccit
     const __m128i coeff_b = _mm_set1_epi16(29); // ++
     const __m128i zero = _mm_setzero_si128();
 
-    int i = 0;
-    for (; i <= npixels - 8; i += 8) {
+    for (size_t i = 0; i + 8 <= npixels; i += 8) {
         uint8_t r0[8], g0[8], b0[8];
 
-        for (int j = 0; j < 8; j++) {
+        for (size_t j = 0; j < 8; j++) {
             r0[j] = rgb[(i + j) * 3 + 0];
             g0[j] = rgb[(i + j) * 3 + 1];
             b0[j] = rgb[(i + j) * 3 + 2];
@@ -192,9 +191,9 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccit
         _mm_storel_epi64((__m128i*)(gray + i), res8);
     }
 
-    int bad_count = 0;
-
-    for (; i < npixels; i++) {
+    size_t bad_count = 0;
+    size_t tail = (npixels / 8) * 8;
+    for (size_t i = tail; i < npixels; i++) {
         uint8_t r = rgb[i * 3 + 0];
         uint8_t g = rgb[i * 3 + 1];
         uint8_t b = rgb[i * 3 + 2];
@@ -215,13 +214,13 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, int npixels, bool* ccit
 
 // JPEG encoder from RGBA → JPEG memory
 int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
-                      int quality, int dpi, bool gray,
+                      int quality, int dpi, int gray,
                       unsigned char** out, unsigned long* outSize) {
     struct jpeg_compress_struct cinfo;
     struct jpeg_error_mgr jerr;
 
     JSAMPROW row_pointer[1];
-    int row_stride = width * (gray ? 1 : 3);
+    size_t row_stride = width * (gray ? 1 : 3);
 
     cinfo.err = jpeg_std_error(&jerr);
     jpeg_create_compress(&cinfo);
@@ -298,7 +297,7 @@ int read_raster(const char* path,
     *orig_width = width;
     *orig_height = height;
 
-    *raster = malloc((size_t)width * (size_t)height * sizeof(uint32_t));
+    *raster = malloc(width * height * sizeof(uint32_t));
     if (!*raster) {
         TIFFClose(tif);
         return -4;
@@ -336,7 +335,7 @@ int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
     uint32_t px;
     uint8_t r, g, b;
     size_t dst;
-    int gr_count = 0;
+    size_t gr_count = 0;
     uint8_t* rgb = malloc(npixels * 3);
     if (!rgb) {
         return -5;
@@ -406,8 +405,8 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
     }
 
     double resample_scale = (double)target_dpi / (double)orig_dpi;
-    uint32_t new_width  = (uint32_t)((*width)  * resample_scale + 0.5);
-    uint32_t new_height = (uint32_t)((*height) * resample_scale + 0.5);
+    size_t new_width  = (*width)  * resample_scale + 0.5;
+    size_t new_height = (*height) * resample_scale + 0.5;
 
     npixels = new_width * new_height;
     if (npixels > SIZE_MAX / 3) {
@@ -421,13 +420,13 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
 
     uint32_t px;
     uint8_t r, g, b;
-    int gr_count = 0;
-    int px_index;
+    size_t gr_count = 0;
+    size_t px_index;
 
     // bilinear resampling
     for (size_t y = 0; y < new_height; y++) {
         double fy = y / resample_scale;
-        int    y0 = (int)floor(fy);
+        size_t    y0 = (size_t)floor(fy);
         double wy = fy - y0;
         if (y0 < 0)       { y0 = 0;    wy = 0; }
         if (y0 >= (*height)-1) { y0 = (*height)-2; wy = 1; }
@@ -435,7 +434,7 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
 
         for (size_t x = 0; x < new_width; x++) {
             double fx = x / resample_scale;
-            int    x0 = (int)floor(fx);
+            size_t    x0 = (size_t)floor(fx);
             double wx = fx - x0;
             if (x0 < 0)      { x0 = 0;    wx = 0; }
             if (x0 >= (*width)-1)  { x0 = (*width)-2;  wx = 1; }
@@ -607,10 +606,10 @@ int convert_tiff_to_data(const char* path,
     *ccitt_filter = 0;
     *gray_filter = gray ? true : false;
     if (!gray) {
-        rc = write_jpeg_to_mem(width, height, pixel_buffer, rgb_quality, rgb_target_dpi, gray, outBuf, outSize);
+        rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, rgb_quality, rgb_target_dpi, gray ? 1 : 0, outBuf, outSize);
         *outDpi = rgb_target_dpi;
     } else {
-        rc = write_jpeg_to_mem(width, height, pixel_buffer, gray_quality, gray_target_dpi, gray, outBuf, outSize);
+        rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, gray_quality, gray_target_dpi, gray ? 1 : 0, outBuf, outSize);
         *outDpi = gray_target_dpi;
     }
 
@@ -630,17 +629,17 @@ int get_compression_type(const char* path) {
     return (int)compression;
 }
 
-int ExtractCCITTRaw(const char* path,
+int ExtractCCITTRaw(const char*     path,
                     unsigned char** outBuf,
-                    unsigned long* outSize,
-                    size_t* width,
-                    size_t* height)
+                    unsigned long*  outSize,
+                    size_t*         width,
+                    size_t*         height)
 {
     TIFF* tif = TIFFOpen(path, "r");
     if (!tif) return -1;
 
     // Получаем размеры
-    int w=0, h=0;
+    size_t w=0, h=0;
     TIFFGetField(tif, TIFFTAG_IMAGEWIDTH,  &w);
     TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
 
@@ -678,8 +677,8 @@ int ExtractCCITTRaw(const char* path,
 
     *outBuf  = buf;
     *outSize = total;
-    *width   = (size_t)w;
-    *height  = (size_t)h;
+    *width   = w;
+    *height  = h;
     return 0;
 }
 
@@ -728,7 +727,8 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 			C.free(unsafe.Pointer(outBuf))
 			return ImageData{}, fmt.Errorf("ExtractCCITTRaw failed with code %d", int(rc))
 		}
-		data := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
+		dataSize := int(outSize)
+		data := C.GoBytes(unsafe.Pointer(outBuf), C.int(dataSize))
 		if outBuf != nil {
 			C.free(unsafe.Pointer(outBuf))
 		}
@@ -760,7 +760,8 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 	}
 
 	if use_ccitt == 1 {
-		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
+		dataSize := int(outSize)
+		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(dataSize))
 
 		//filtered := medianFilterLight(goGray, int(w), int(h))
 		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
@@ -782,8 +783,8 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 		}, nil
 		//return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
 	}
-
-	data := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
+	dataSize := int(outSize)
+	data := C.GoBytes(unsafe.Pointer(outBuf), C.int(dataSize))
 
 	if outBuf != nil {
 		C.free(unsafe.Pointer(outBuf))
@@ -886,17 +887,18 @@ func EncodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
 		return nil, errors.New("invalid packed bits length")
 	}
 	var outPtr *C.uchar
-	var outSize C.long
+	var outSize C.ulong
 	ret := C.EncodeRawG4(
 		(*C.uchar)(unsafe.Pointer(&bits[0])),
-		C.int(width), C.int(height),
+		C.size_t(width), C.size_t(height),
 		&outPtr, &outSize,
 	)
 	if ret != 0 {
 		return nil, errors.New("libtiff CCITT-G4 encode failed")
 	}
 	defer C.free(unsafe.Pointer(outPtr))
-	return C.GoBytes(unsafe.Pointer(outPtr), C.int(outSize)), nil
+	size := int(outSize)
+	return C.GoBytes(unsafe.Pointer(outPtr), C.int(size)), nil
 }
 
 // // #cgo LDFLAGS: -ltiff -ljpeg -lwebp -lzstd -llzma -ldeflate -ljbig -lLerc -lz
