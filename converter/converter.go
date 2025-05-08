@@ -280,7 +280,7 @@ func convertFolder(cfg convertFolderParam) (err error) {
 
 func Convert(request ConversionRequest) error {
 
-	maxConversions := len(request.Folders) // folders at a time
+	maxConversions := len(request.Folders)
 
 	sort.SliceStable(request.Folders, func(i, j int) bool {
 		return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)

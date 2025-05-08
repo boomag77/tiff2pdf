@@ -30,6 +30,9 @@ package converter
 
 #define GRAY_THRESHOLD 2
 #define GRAY_RATIO 0.9
+#define LOWER_THRESHOLD 30
+#define UPPER_THRESHOLD 225
+#define CCITT_THRESHOLD 98
 
 typedef struct {
     unsigned char *data;
@@ -159,6 +162,8 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* c
     const __m128i coeff_b = _mm_set1_epi16(29); // ++
     const __m128i zero = _mm_setzero_si128();
 
+    size_t bw_pixels = npixels;
+
     for (size_t i = 0; i + 8 <= npixels; i += 8) {
         uint8_t r0[8], g0[8], b0[8];
 
@@ -172,15 +177,6 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* c
         __m128i g = _mm_unpacklo_epi8(_mm_loadl_epi64((__m128i*)g0), zero);
         __m128i b = _mm_unpacklo_epi8(_mm_loadl_epi64((__m128i*)b0), zero);
 
-        // r = _mm_mullo_epi16(r, coeff_r); // --
-        // g = _mm_mullo_epi16(g, coeff_g); // --
-        // b = _mm_mullo_epi16(b, coeff_b); // --
-
-        // __m128i sum = _mm_add_epi16(r, g); // --
-        // sum = _mm_add_epi16(sum, b); // --
-
-        // sum = _mm_srli_epi16(sum, 6); // --
-
         r = _mm_mullo_epi16(r, coeff_r); // ++
         g = _mm_mullo_epi16(g, coeff_g); // ++
         b = _mm_mullo_epi16(b, coeff_b); // ++
@@ -189,9 +185,17 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* c
 
         __m128i res8 = _mm_packus_epi16(sum, zero);
         _mm_storel_epi64((__m128i*)(gray + i), res8);
+
+        uint8_t tmp[8];
+        _mm_storel_epi64((__m128i*)tmp, res8);
+        for (size_t j = 0; j < 8; j++) {
+            if (tmp[j] > LOWER_THRESHOLD && tmp[j] < UPPER_THRESHOLD) {
+                bw_pixels--;
+            }
+        }
     }
 
-    size_t bad_count = 0;
+    //size_t bad_count = 0;
     size_t tail = (npixels / 8) * 8;
     for (size_t i = tail; i < npixels; i++) {
         uint8_t r = rgb[i * 3 + 0];
@@ -199,16 +203,21 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* c
         uint8_t b = rgb[i * 3 + 2];
         //gray[i] = (r * 30 + g * 59 + b * 11) / 100; // --
         gray[i] = (r * 77 + g * 150 + b * 29) >> 8;   // ++
-        if (gray[i] > 50 && gray[i] < 200) {
-            bad_count++;
+        if (gray[i] > LOWER_THRESHOLD && gray[i] < UPPER_THRESHOLD) {
+            //bad_count++;
+            bw_pixels--;
         }
     }
-    double bad_ratio = (double)bad_count / (double)(npixels);
-    if (bad_ratio < 0.05) {
-        *ccitt_ready = true;
-    } else {
-        *ccitt_ready = false;
-    }
+    // double bad_ratio = (double)bad_count / (double)(npixels);
+    // if (bad_ratio < 0.0001) {
+    //     *ccitt_ready = true;
+    // } else {
+    //     *ccitt_ready = false;
+    // }
+
+    //size_t good_count = npixels - bad_count;
+
+    *ccitt_ready = (bw_pixels * 100 >= npixels * CCITT_THRESHOLD);
 
 }
 
@@ -589,7 +598,7 @@ int convert_tiff_to_data(const char* path,
     // }
 
     //int rc = -1;
-    ccitt_ready = 0; // exclude/force CCITT for now
+    //ccitt_ready = 0; // exclude/force CCITT for now
 
     if (ccitt_ready) {
         *ccitt_filter = 1;
