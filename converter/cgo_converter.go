@@ -34,6 +34,7 @@ package converter
 #define UPPER_THRESHOLD 225
 #define CCITT_THRESHOLD 98
 
+
 typedef struct {
     unsigned char *data;
     size_t         size;
@@ -481,6 +482,7 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
             if (abs(rf-gf) < GRAY_THRESHOLD && abs(rf-bf) < GRAY_THRESHOLD && abs(gf-bf) < GRAY_THRESHOLD) {
                 gr_count++;
             }
+
         }
     }
 
