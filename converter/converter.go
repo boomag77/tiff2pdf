@@ -34,10 +34,12 @@ type convertResult struct {
 }
 
 type ConversionParameters struct {
-	targetRGBdpi          int
-	targetGraydpi         int
-	targetRGBjpegQuality  int
-	targetGrayjpegQuality int
+	CCITT                 string
+	TIFFMode              string
+	TargetRGBdpi          int
+	TargetGraydpi         int
+	TargetRGBjpegQuality  int
+	TargetGrayjpegQuality int
 }
 
 type convertFolderParam struct {
@@ -112,7 +114,7 @@ func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters,
 
 }
 
-func convertFolder(cfg convertFolderParam) (err error) {
+func convertFolderToPDF(cfg convertFolderParam) (err error) {
 	var pdfPageCount int = 0
 	startTime := time.Now()
 
@@ -280,11 +282,15 @@ func convertFolder(cfg convertFolderParam) (err error) {
 
 func Convert(request ConversionRequest) error {
 
-	maxConversions := len(request.Folders)
+	foldersCount := len(request.Folders)
 
-	sort.SliceStable(request.Folders, func(i, j int) bool {
-		return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)
-	})
+	maxConversions := foldersCount
+
+	if foldersCount > 1 {
+		sort.SliceStable(request.Folders, func(i, j int) bool {
+			return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)
+		})
+	}
 
 	var wg sync.WaitGroup
 
@@ -304,17 +310,37 @@ func Convert(request ConversionRequest) error {
 				outputDirs: request.Parameters.OutputDir,
 
 				convParams: ConversionParameters{
-					targetRGBdpi:          request.Parameters.RGBdpi,
-					targetGraydpi:         request.Parameters.GrayDpi,
-					targetRGBjpegQuality:  request.Parameters.RGBJpegQuality,
-					targetGrayjpegQuality: request.Parameters.GrayJpegQuality,
+					CCITT:                 request.Parameters.CCITT,
+					TargetRGBdpi:          request.Parameters.RGBdpi,
+					TargetGraydpi:         request.Parameters.GrayDpi,
+					TargetRGBjpegQuality:  request.Parameters.RGBJpegQuality,
+					TargetGrayjpegQuality: request.Parameters.GrayJpegQuality,
 				},
 			}
-			err := convertFolder(folderParams)
-			if err != nil {
-				fmt.Printf("Error during conversion in subdirectory %s: %v\n", tiffFolder.Name, err)
+			if request.Parameters.OutputFileType == "pdf" {
+				err := convertFolderToPDF(folderParams)
+				if err != nil {
+					fmt.Printf("Error during conversion in subdirectory %s: %v\n", tiffFolder.Name, err)
+					return
+				}
+			} else {
+				fmt.Printf("Processing TIFF files in folder %s...\n", tiffFolder.Name)
+				fmt.Println("TIFF files count: ", len(tiffFolder.TiffFilesPaths))
+				fmt.Println("TIFF files size: ", tiffFolder.TiffFilesSize)
+				folderParams := convertFolderParam{
+					tiffFolder: tiffFolder,
+					outputDirs: request.Parameters.OutputDir,
+					convParams: ConversionParameters{
+						TargetRGBdpi:  request.Parameters.RGBdpi,
+						TargetGraydpi: request.Parameters.GrayDpi,
+						CCITT:         request.Parameters.CCITT,
+						TIFFMode:      request.Parameters.TIFFMode,
+					},
+				}
+				fmt.Println(folderParams)
 				return
 			}
+
 		}(tiffFolder)
 	}
 	wg.Wait()

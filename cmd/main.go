@@ -211,28 +211,27 @@ func main() {
 	}
 
 	if params.OutputFileType == "tiff" {
-		// tiffs, size, err := files_manager.GetTIFFPaths(params.InputRootDir)
-		// if err != nil {
-		// 	fmt.Printf("Error getting TIFF files: %v\n", err)
-		// 	os.Exit(1)
-		// }
-		// if len(tiffs) == 0 {
-		// 	fmt.Println("No TIFF files found in the input directory.")
-		// 	os.Exit(0)
-		// }
+		tiffs, size, err := files_manager.GetTIFFPaths(params.InputRootDir)
+		if err != nil {
+			fmt.Printf("Error getting TIFF files: %v\n", err)
+			os.Exit(1)
+		}
+		if len(tiffs) == 0 {
+			fmt.Println("No TIFF files found in the input directory.")
+			os.Exit(0)
+		}
 
-		// tiffFolder := TIFFfolder{
-		// 	TiffFilesPaths: tiffs,
-		// 	Name:           filepath.Base(params.InputRootDir),
-		// 	Path:           params.InputRootDir,
-		// 	TiffFilesSize:  size,
-		// }
+		tiffFolder := TIFFfolder{
+			TiffFilesPaths: tiffs,
+			Name:           filepath.Base(params.InputRootDir),
+			Path:           params.InputRootDir,
+			TiffFilesSize:  size,
+		}
 
-		// request = ConversionRequest{
-		// 	Parameters: params,
-		// 	Folders:    []TIFFfolder{tiffFolder},
-		// }
-		fmt.Println("TIFF mode is not implemented yet")
+		request = ConversionRequest{
+			Parameters: params,
+			Folders:    []TIFFfolder{tiffFolder},
+		}
 	}
 
 	if err := converter.Convert(request); err != nil {

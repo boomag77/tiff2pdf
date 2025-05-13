@@ -154,7 +154,7 @@ int EncodeRawG4(
 }
 
 
-void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* ccitt_ready) {
+void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* ccitt_ready) {
     // const __m128i coeff_r = _mm_set1_epi16(30); // --
     // const __m128i coeff_g = _mm_set1_epi16(59); // --
     // const __m128i coeff_b = _mm_set1_epi16(11); // --
@@ -211,9 +211,9 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, bool* c
     }
     // double bad_ratio = (double)bad_count / (double)(npixels);
     // if (bad_ratio < 0.0001) {
-    //     *ccitt_ready = true;
+    //     *ccitt_ready = 1;
     // } else {
-    //     *ccitt_ready = false;
+    //     *ccitt_ready = 0;
     // }
 
     //size_t good_count = npixels - bad_count;
@@ -325,8 +325,11 @@ int read_raster(const char* path,
 
 // read pixels to rgb
 int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
-                        uint8_t** pxls_buff, bool* gray, bool* ccitt_ready)
+                        uint8_t** pxls_buff, bool* gray, int* ccitt_ready)
 {
+
+    int ccitt_mode = *ccitt_ready;
+
     if (!raster || !pxls_buff || !gray || !ccitt_ready) {
         return -1;
     }
@@ -370,14 +373,21 @@ int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
     }
 
     double gray_ratio = (double)gr_count / (double)(npixels);
-    if (gray_ratio > GRAY_RATIO) {
+    if (gray_ratio > GRAY_RATIO || ccitt_mode == 1) {
         uint8_t* gray_buff =  malloc(npixels);
         if (!gray_buff) {
             free(rgb);
             return -6;
         }
-        bool ready_for_ccitt = false;
+        int ready_for_ccitt = 0;
         rgb_to_gray_sse2(rgb, gray_buff, npixels, &ready_for_ccitt);
+
+        if (ccitt_mode == -1) {
+            ready_for_ccitt = 0;
+        }
+        if (ccitt_mode == 1) {
+            ready_for_ccitt = 1;
+        }
 
         *pxls_buff = gray_buff;
         *gray = true;
@@ -396,9 +406,11 @@ int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
 
 // read pixels to rgb_resampled
 int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* height,
-                                    uint8_t** pxls_buff, bool* gray, bool* ccitt_ready,
+                                    uint8_t** pxls_buff, bool* gray, int* ccitt_ready,
                                     int target_dpi, int orig_dpi)
 {
+    int ccitt_mode = *ccitt_ready;
+
     if (!raster || !pxls_buff || !gray || !ccitt_ready) {
         return -1;
     }
@@ -490,15 +502,22 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
     *height = new_height;
 
     double gray_ratio = (double)gr_count / (double)(npixels);
-    if (gray_ratio > GRAY_RATIO) {
+    if (gray_ratio > GRAY_RATIO || ccitt_mode == 1) {
         uint8_t* gray_buff =  malloc(npixels);
 
         if (!gray_buff) {
             free(rgb_resampled);
             return -7;
         }
-        bool ready_for_ccitt = false;
+        int ready_for_ccitt = 0;
         rgb_to_gray_sse2(rgb_resampled, gray_buff, npixels, &ready_for_ccitt);
+
+        if (ccitt_mode == -1) {
+            ready_for_ccitt = 0;
+        }
+        if (ccitt_mode == 1) {
+            ready_for_ccitt = 1;
+        }
 
         *pxls_buff = gray_buff;
         *gray = true;
@@ -526,6 +545,8 @@ int convert_tiff_to_data(const char* path,
 
     int rc = 0;
 
+    int ccitt_mode = *ccitt_filter;
+
     uint16_t orig_dpi = 0;
     size_t orig_width = 0, orig_height = 0;
     uint32_t* raster;
@@ -540,7 +561,7 @@ int convert_tiff_to_data(const char* path,
 
     uint8_t* pixel_buffer = NULL;
     bool gray = false;
-    bool ccitt_ready = false;
+    int ccitt_ready = *ccitt_filter;
 
     rc = read_pxls_from_raster(raster, &width, &height, &pixel_buffer, &gray, &ccitt_ready);
     if (rc != 0) {
@@ -570,7 +591,7 @@ int convert_tiff_to_data(const char* path,
             free(pixel_buffer);
             pixel_buffer = gray_buff;
         }
-    } else {
+    } else if (!gray) {
         if (rgb_need_resample) {
             uint8_t* rgb_buff = NULL;
             rc = read_pxls_resampled_from_raster(raster, &width, &height, &rgb_buff, &gray, &ccitt_ready,
@@ -602,7 +623,7 @@ int convert_tiff_to_data(const char* path,
     //int rc = -1;
     //ccitt_ready = 0; // exclude/force CCITT for now
 
-    if (ccitt_ready) {
+    if ((ccitt_ready && ccitt_mode == 0) || ccitt_mode == 1) {
         *ccitt_filter = 1;
         *gray_filter = false;
         *outBuf = pixel_buffer;
@@ -745,6 +766,15 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 	var use_ccitt C.int
 	var use_gray C.bool
 
+	switch convParams.CCITT {
+	case "auto":
+		use_ccitt = 0
+	case "on":
+		use_ccitt = 1
+	case "off":
+		use_ccitt = -1
+	}
+
 	comp := C.get_compression_type(cPath)
 	if comp == 2 || comp == 3 || comp == 4 {
 		// CCITT
@@ -773,10 +803,10 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 
 	rc := C.convert_tiff_to_data(
 		cPath,
-		C.int(convParams.targetRGBjpegQuality),
-		C.int(convParams.targetGrayjpegQuality),
-		C.int(convParams.targetRGBdpi),
-		C.int(convParams.targetGraydpi),
+		C.int(convParams.TargetRGBjpegQuality),
+		C.int(convParams.TargetGrayjpegQuality),
+		C.int(convParams.TargetRGBdpi),
+		C.int(convParams.TargetGraydpi),
 		&outBuf, &outSize,
 		&use_ccitt,
 		&use_gray,
@@ -789,7 +819,7 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 		return ImageData{}, fmt.Errorf("convert_tiff_to_data failed with code %d", int(rc))
 	}
 
-	if use_ccitt == 1 {
+	if use_ccitt == 1 && convParams.CCITT != "off" {
 		dataSize := int(outSize)
 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(dataSize))
 
@@ -809,7 +839,7 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 			Gray:      bool(use_gray),
 			Width:     int(w),
 			Height:    int(h),
-			ActualDpi: convParams.targetGraydpi,
+			ActualDpi: convParams.TargetGraydpi,
 		}, nil
 		//return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
 	}
@@ -822,9 +852,9 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 
 	var actDPI int = 0
 	if use_gray {
-		actDPI = convParams.targetGraydpi
+		actDPI = convParams.TargetGraydpi
 	} else {
-		actDPI = convParams.targetRGBdpi
+		actDPI = convParams.TargetRGBdpi
 	}
 
 	return ImageData{
