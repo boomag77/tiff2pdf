@@ -1,8 +1,11 @@
 package contracts
 
 type InputFlags struct {
-	InputRootDir    string
 	OutputDir       []string
+	InputRootDir    string
+	OutputFileType  string
+	CCITT           string
+	TIFFMode        string
 	RGBdpi          int
 	GrayDpi         int
 	GrayJpegQuality int

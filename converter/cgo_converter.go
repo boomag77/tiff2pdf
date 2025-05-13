@@ -693,6 +693,25 @@ int ExtractCCITTRaw(const char*     path,
     return 0;
 }
 
+// void WriteCCITTTIFF(const char* filename,
+//                     int width, int height,
+//                     unsigned char* ccitt_buf, size_t ccitt_size,
+//                     int dpi) {
+//     TIFF* out = TIFFOpen(filename, "w");
+//     if (!out) return;
+//     TIFFSetField(out, TIFFTAG_IMAGEWIDTH, (uint32)width);
+//     TIFFSetField(out, TIFFTAG_IMAGELENGTH, (uint32)height);
+//     TIFFSetField(out, TIFFTAG_COMPRESSION, COMPRESSION_CCITTFAX4);
+//     TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISWHITE);
+//     TIFFSetField(out, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
+//     TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, (uint32)height);
+//     TIFFSetField(out, TIFFTAG_XRESOLUTION, (float)dpi);
+//     TIFFSetField(out, TIFFTAG_YRESOLUTION, (float)dpi);
+//     TIFFSetField(out, TIFFTAG_RESOLUTIONUNIT, RESUNIT_INCH);
+//     TIFFWriteRawStrip(out, 0, ccitt_buf, (tmsize_t)ccitt_size);
+//     TIFFClose(out);
+// }
+
 */
 import "C"
 import (

@@ -51,7 +51,7 @@ type BoxFolder = contracts.BoxFolder
 // 	return subDirs, nil
 // }
 
-func getTIFFPaths(dir string) ([]string, int64, error) {
+func GetTIFFPaths(dir string) ([]string, int64, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, 0, err
@@ -87,7 +87,7 @@ func GetTIFFFolders(rootFolder string) ([]TIFFfolder, error) {
 			continue
 		}
 		subDirPath := filepath.Join(rootFolder, entry.Name())
-		tiffFiles, size, _ := getTIFFPaths(subDirPath)
+		tiffFiles, size, _ := GetTIFFPaths(subDirPath)
 		if len(tiffFiles) == 0 {
 			continue
 		}

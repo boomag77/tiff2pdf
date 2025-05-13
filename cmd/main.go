@@ -24,15 +24,6 @@ const (
 	Reset  = "\x1b[0m"
 )
 
-func defaultFlags() InputFlags {
-	return InputFlags{
-		RGBdpi:          300,
-		GrayDpi:         300,
-		GrayJpegQuality: 100,
-		RGBJpegQuality:  100,
-	}
-}
-
 func validateFlags(args InputFlags) []error {
 	var errs []error
 	if args.InputRootDir != "" {
@@ -45,7 +36,14 @@ func validateFlags(args InputFlags) []error {
 	}
 
 	if len(args.OutputDir) == 0 {
-		errs = append(errs, fmt.Errorf("at least one output directory is required"))
+		switch args.OutputFileType {
+		case "pdf":
+			errs = append(errs, fmt.Errorf("output directory is required for PDF conversion"))
+		case "tiff":
+			if args.TIFFMode == "convert" {
+				errs = append(errs, fmt.Errorf("output directory is required for TIFF conversion"))
+			}
+		}
 	}
 	if len(args.OutputDir) > 2 {
 		errs = append(errs, fmt.Errorf("only two output directories are allowed"))
@@ -60,6 +58,36 @@ func validateFlags(args InputFlags) []error {
 			errs = append(errs, fmt.Errorf("output directory path cannot be empty"))
 		}
 	}
+	fileType := strings.ToLower(args.OutputFileType)
+	if fileType != "pdf" && fileType != "tiff" {
+		errs = append(errs, fmt.Errorf("mode must be either 'pdf' or 'tiff'"))
+	}
+
+	tiffMode := strings.ToLower(args.TIFFMode)
+	if tiffMode != "replace" && tiffMode != "convert" && tiffMode != "append" {
+		errs = append(errs, fmt.Errorf("TIFF mode must be either 'replace', 'convert' or 'append'"))
+	}
+	if fileType == "tiff" && tiffMode == "" {
+		errs = append(errs, fmt.Errorf("TIFF mode is required for TIFF conversion"))
+	}
+
+	ccittMode := strings.ToLower(args.CCITT)
+	if ccittMode != "on" && ccittMode != "off" && ccittMode != "auto" {
+		errs = append(errs, fmt.Errorf("CCITT mode must be either 'on', 'off' or 'auto'"))
+	}
+
+	if args.RGBdpi < 10 {
+		errs = append(errs, fmt.Errorf("RGB DPI must be greater than or equal to 10"))
+	}
+	if args.GrayDpi < 10 {
+		errs = append(errs, fmt.Errorf("gray DPI must be greater than or equal to 10"))
+	}
+	if args.RGBJpegQuality < 1 || args.RGBJpegQuality > 100 {
+		errs = append(errs, fmt.Errorf("RGB JPEG quality must be between 1 and 100"))
+	}
+	if args.GrayJpegQuality < 1 || args.GrayJpegQuality > 100 {
+		errs = append(errs, fmt.Errorf("gray JPEG quality must be between 1 and 100"))
+	}
 
 	if len(errs) == 0 {
 		return nil
@@ -69,26 +97,36 @@ func validateFlags(args InputFlags) []error {
 }
 
 func main() {
-	fmt.Println("Converting TIFF files to PDF...")
 
-	inputRootDir := flag.String("input", "", "Input directory containing TIFF files")
+	inputRootDir := flag.String("input", "", "Input directory containing folders with TIFF files or TIFF files")
 	outputs := []string{}
 	flag.Func("output", "Output directory for converted files", func(outputDirPath string) error {
 		outputs = append(outputs, outputDirPath)
 		return nil
 	})
-	dpiRGB := flag.Int("dpirgb", 300, "DPI fo RGB images")
-	dpiGray := flag.Int("dpigr", 300, "DPI for grayscale images")
-	jpegRGBQuality := flag.Int("qrgb", 100, "JPEG quality (1-100) for RGB images")
-	jpegGrayQuality := flag.Int("qgr", 100, "JPEG quality (1-100) for grayscale images")
+	fileType := flag.String("type", "pdf", "Type of the output file: pdf, tiff")
+
+	tiffMode := flag.String("tiffmode", "replace", "TIFF mode: replace, convert, append")
+
+	ccitt_compression := flag.String("ccitt", "off", "CCITT compression: on, off, auto")
+
+	dpiRGB := flag.Int("rgbdpi", 300, "DPI fo RGB images")
+	dpiGray := flag.Int("grdpi", 300, "DPI for grayscale images")
+	jpegRGBQuality := flag.Int("rgbq", 100, "JPEG quality (1-100) for RGB images")
+	jpegGrayQuality := flag.Int("grq", 100, "JPEG quality (1-100) for grayscale images")
 	flag.Parse()
+
+	// for testing
 	flag.Visit(func(f *flag.Flag) {
-		fmt.Printf("  Пойман флаг: %s = %s\n", f.Name, f.Value)
+		fmt.Printf("Пойман флаг: %s = %s\n", f.Name, f.Value)
 	})
 
 	params := InputFlags{
 		InputRootDir:    *inputRootDir,
 		OutputDir:       outputs,
+		OutputFileType:  *fileType,
+		CCITT:           *ccitt_compression,
+		TIFFMode:        *tiffMode,
 		RGBdpi:          *dpiRGB,
 		GrayDpi:         *dpiGray,
 		GrayJpegQuality: *jpegGrayQuality,
@@ -103,24 +141,38 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println(params.GrayJpegQuality)
-
-	if params.RGBdpi == 0 {
-		params.RGBdpi = defaultFlags().RGBdpi
-	}
-	if params.GrayDpi == 0 {
-		params.GrayDpi = defaultFlags().GrayDpi
-	}
-	if params.GrayJpegQuality == 0 {
-		params.GrayJpegQuality = defaultFlags().GrayJpegQuality
-	}
-	if params.RGBJpegQuality == 0 {
-		params.RGBJpegQuality = defaultFlags().RGBJpegQuality
-	}
-	fmt.Println("Provided parameters")
 	fmt.Println(string(Yellow), "-------------------", string(Reset))
+	if params.OutputFileType == "pdf" {
+		switch params.CCITT {
+		case "on":
+			fmt.Println("TIFFS -> PDF (resampled if needed) with CCITTFAXG4 compression")
+		case "off":
+			fmt.Println("TIFFS -> PDF (resampled if needed)")
+		case "auto":
+			fmt.Println("TIFFS -> PDF (resampled if needed) with CCITTFAXG4 compression (if possible)")
+		}
+	} else {
+		switch params.CCITT {
+		case "on":
+			fmt.Println("TIFFS -> TIFFS (resampled if needed) with CCITTFAXG4 compression")
+		case "off":
+			fmt.Println("TIFFS -> TIFFS (resampled if needed)")
+		case "auto":
+			fmt.Println("TIFFS -> TIFFS (resampled if needed) with CCITTFAXG4 compression (if possible)")
+		}
+		switch params.TIFFMode {
+		case "replace":
+			fmt.Println("TIFF mode: replace - replace original TIFF files")
+		case "convert":
+			fmt.Println("TIFF mode: convert - convert original TIFF files to new TIFF files")
+		case "append":
+			fmt.Println("TIFF mode: append - append converted TIFF files to original TIFF files")
+		}
+	}
 	fmt.Println("INPUT DIR:\n", params.InputRootDir)
-	fmt.Println("OUTPUT DIR(s):\n", strings.Join(params.OutputDir, "\n "))
+	if len(params.OutputDir) > 0 {
+		fmt.Println("OUTPUT DIR(s):\n", strings.Join(params.OutputDir, "\n "))
+	}
 	if params.RGBdpi >= 0 {
 		fmt.Println("TARGET RGB DPI: ", params.RGBdpi)
 	} else {
@@ -131,32 +183,62 @@ func main() {
 	} else {
 		fmt.Println("TARGET GRAY DPI: Image original")
 	}
-	fmt.Println("TARGET RGB JPEG Quality: ", params.RGBJpegQuality)
-	fmt.Println("TARGET GRAY JPEG Quality: ", params.GrayJpegQuality)
+	if params.CCITT == "off" || params.CCITT == "auto" {
+		fmt.Println("TARGET RGB JPEG Quality: ", params.RGBJpegQuality)
+		fmt.Println("TARGET GRAY JPEG Quality: ", params.GrayJpegQuality)
+	}
 	fmt.Println(string(Yellow), "-------------------", string(Reset))
-	fmt.Println("Starting conversion...")
 
 	startTime := time.Now()
 
-	tifFldrs, err := files_manager.GetTIFFFolders(params.InputRootDir)
-	if err != nil {
-		fmt.Printf("Error getting TIFF folders: %v\n", err)
-		os.Exit(1)
-	}
-	if len(tifFldrs) == 0 {
-		fmt.Println("No TIFF folders found in the input directory.")
-		os.Exit(0)
+	var request ConversionRequest
+
+	if params.OutputFileType == "pdf" {
+		tifFldrs, err := files_manager.GetTIFFFolders(params.InputRootDir)
+		if err != nil {
+			fmt.Printf("Error getting TIFF folders: %v\n", err)
+			os.Exit(1)
+		}
+		if len(tifFldrs) == 0 {
+			fmt.Println("No TIFF folders found in the input directory.")
+			os.Exit(0)
+		}
+
+		request = ConversionRequest{
+			Parameters: params,
+			Folders:    tifFldrs,
+		}
 	}
 
-	request := ConversionRequest{
-		Parameters: params,
-		Folders:    tifFldrs,
+	if params.OutputFileType == "tiff" {
+		// tiffs, size, err := files_manager.GetTIFFPaths(params.InputRootDir)
+		// if err != nil {
+		// 	fmt.Printf("Error getting TIFF files: %v\n", err)
+		// 	os.Exit(1)
+		// }
+		// if len(tiffs) == 0 {
+		// 	fmt.Println("No TIFF files found in the input directory.")
+		// 	os.Exit(0)
+		// }
+
+		// tiffFolder := TIFFfolder{
+		// 	TiffFilesPaths: tiffs,
+		// 	Name:           filepath.Base(params.InputRootDir),
+		// 	Path:           params.InputRootDir,
+		// 	TiffFilesSize:  size,
+		// }
+
+		// request = ConversionRequest{
+		// 	Parameters: params,
+		// 	Folders:    []TIFFfolder{tiffFolder},
+		// }
+		fmt.Println("TIFF mode is not implemented yet")
 	}
 
 	if err := converter.Convert(request); err != nil {
 		fmt.Printf("Error during conversion: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("Conversion completed successfully.")
+	fmt.Println(string(Green), "Conversion completed successfully.", string(Reset))
 	fmt.Printf("Total time taken: %v\n", time.Since(startTime))
 }
