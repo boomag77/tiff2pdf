@@ -40,6 +40,7 @@ type ConversionParameters struct {
 	TargetGraydpi         int
 	TargetRGBjpegQuality  int
 	TargetGrayjpegQuality int
+	Raw                   bool
 }
 
 type convertFolderParam struct {
@@ -112,6 +113,86 @@ func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters,
 		}
 	}
 
+}
+
+func processTIFFFolder(cfg convertFolderParam) error {
+
+	decodeTiffTaskChan := make(chan decodeTiffTask)
+	filesCount := len(cfg.tiffFolder.TiffFilesPaths)
+	resultChan := make(chan convertResult, filesCount)
+
+	numWorkers := min(runtime.NumCPU(), filesCount)
+
+	wg := &sync.WaitGroup{}
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go convertWorker(decodeTiffTaskChan, cfg.convParams, wg)
+	}
+
+	done := make(chan struct{})
+
+	go func() {
+		for result := range resultChan {
+			fmt.Printf("Processing file %s, page %d\n", cfg.tiffFolder.TiffFilesPaths[result.pageIndex], result.pageIndex)
+			filePath := filepath.Join(cfg.outputDirs[0], filepath.Base(cfg.tiffFolder.TiffFilesPaths[result.pageIndex]))
+			if result.ccitt {
+				fmt.Printf("CCITT image: %s, size: %d\n", result.imageId, len(result.imgBuffer))
+				saveDataToTIFFFile(filePath,
+					result.pixelWidth,
+					result.pixelHeight,
+					result.imgBuffer,
+					cfg.convParams.TargetGraydpi,
+					CompressionCCITTG4,
+					true,
+				)
+			} else {
+				if result.gray {
+
+					fmt.Printf("Grayscale image: %s, size: %d\n", result.imageId, len(result.imgBuffer))
+					saveDataToTIFFFile(filePath,
+						result.pixelWidth,
+						result.pixelHeight,
+						result.imgBuffer,
+						cfg.convParams.TargetGraydpi,
+						CompressionJPEG,
+						true,
+					)
+				} else {
+					fmt.Printf("RGB image: %s, size: %d\n", result.imageId, len(result.imgBuffer))
+					saveDataToTIFFFile(filePath,
+						result.pixelWidth,
+						result.pixelHeight,
+						result.imgBuffer,
+						cfg.convParams.TargetRGBdpi,
+						CompressionJPEG,
+						false,
+					)
+				}
+			}
+			//fmt.Println("Saving image to folder: ", cfg.outputDirs[0])
+
+			// Process the result here
+			// For example, save the image to a file or send it to another channel
+		}
+		close(done)
+	}()
+
+	for i, file := range cfg.tiffFolder.TiffFilesPaths {
+		task := decodeTiffTask{
+			filePath:   file,
+			pageNumber: i,
+			resultCh:   resultChan,
+		}
+		decodeTiffTaskChan <- task
+	}
+	close(decodeTiffTaskChan)
+
+	wg.Wait()
+	close(resultChan)
+	<-done
+
+	return nil
 }
 
 func convertFolderToPDF(cfg convertFolderParam) (err error) {
@@ -305,19 +386,21 @@ func Convert(request ConversionRequest) error {
 
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			folderParams := convertFolderParam{
-				tiffFolder: tiffFolder,
-				outputDirs: request.Parameters.OutputDir,
 
-				convParams: ConversionParameters{
-					CCITT:                 request.Parameters.CCITT,
-					TargetRGBdpi:          request.Parameters.RGBdpi,
-					TargetGraydpi:         request.Parameters.GrayDpi,
-					TargetRGBjpegQuality:  request.Parameters.RGBJpegQuality,
-					TargetGrayjpegQuality: request.Parameters.GrayJpegQuality,
-				},
-			}
 			if request.Parameters.OutputFileType == "pdf" {
+				folderParams := convertFolderParam{
+					tiffFolder: tiffFolder,
+					outputDirs: request.Parameters.OutputDir,
+
+					convParams: ConversionParameters{
+						Raw:                   false,
+						CCITT:                 request.Parameters.CCITT,
+						TargetRGBdpi:          request.Parameters.RGBdpi,
+						TargetGraydpi:         request.Parameters.GrayDpi,
+						TargetRGBjpegQuality:  request.Parameters.RGBJpegQuality,
+						TargetGrayjpegQuality: request.Parameters.GrayJpegQuality,
+					},
+				}
 				err := convertFolderToPDF(folderParams)
 				if err != nil {
 					fmt.Printf("Error during conversion in subdirectory %s: %v\n", tiffFolder.Name, err)
@@ -331,6 +414,7 @@ func Convert(request ConversionRequest) error {
 					tiffFolder: tiffFolder,
 					outputDirs: request.Parameters.OutputDir,
 					convParams: ConversionParameters{
+						Raw:           true,
 						TargetRGBdpi:  request.Parameters.RGBdpi,
 						TargetGraydpi: request.Parameters.GrayDpi,
 						CCITT:         request.Parameters.CCITT,
@@ -338,6 +422,10 @@ func Convert(request ConversionRequest) error {
 					},
 				}
 				fmt.Println(folderParams)
+				err := processTIFFFolder(folderParams)
+				if err != nil {
+					fmt.Printf("Error during conversion in subdirectory %s: %v\n", tiffFolder.Name, err)
+				}
 				return
 			}
 

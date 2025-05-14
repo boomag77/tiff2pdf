@@ -535,7 +535,7 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
 }
 
 // TIFF → JPEG via RGB
-int convert_tiff_to_data(const char* path,
+int convert_tiff_to_data(int raw, const char* path,
                         int rgb_quality, int gray_quality,
                         int rgb_target_dpi, int gray_target_dpi,
                          unsigned char** outBuf, unsigned long* outSize,
@@ -638,11 +638,32 @@ int convert_tiff_to_data(const char* path,
     *ccitt_filter = 0;
     *gray_filter = gray ? true : false;
     if (!gray) {
-        rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, rgb_quality, rgb_target_dpi, gray ? 1 : 0, outBuf, outSize);
-        *outDpi = rgb_target_dpi;
+        if (raw) {
+            *outBuf = pixel_buffer;
+            *outSize = (unsigned long)(width * height * 3);
+            *outWidth = width;
+            *outHeight = height;
+            *outDpi = rgb_target_dpi;
+            free(raster);
+            return 0;
+        } else {
+            rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, rgb_quality, rgb_target_dpi, gray ? 1 : 0, outBuf, outSize);
+            *outDpi = rgb_target_dpi;
+        }
+
     } else {
-        rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, gray_quality, gray_target_dpi, gray ? 1 : 0, outBuf, outSize);
-        *outDpi = gray_target_dpi;
+        if (raw) {
+            *outBuf = pixel_buffer;
+            *outSize = (unsigned long)(width * height);
+            *outWidth = width;
+            *outHeight = height;
+            *outDpi = gray_target_dpi;
+            free(raster);
+            return 0;
+        } else {
+            rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, gray_quality, gray_target_dpi, gray ? 1 : 0, outBuf, outSize);
+            *outDpi = gray_target_dpi;
+        }
     }
 
     *outWidth = width;
@@ -714,24 +735,69 @@ int ExtractCCITTRaw(const char*     path,
     return 0;
 }
 
-// void WriteCCITTTIFF(const char* filename,
-//                     int width, int height,
-//                     unsigned char* ccitt_buf, size_t ccitt_size,
-//                     int dpi) {
-//     TIFF* out = TIFFOpen(filename, "w");
-//     if (!out) return;
-//     TIFFSetField(out, TIFFTAG_IMAGEWIDTH, (uint32)width);
-//     TIFFSetField(out, TIFFTAG_IMAGELENGTH, (uint32)height);
-//     TIFFSetField(out, TIFFTAG_COMPRESSION, COMPRESSION_CCITTFAX4);
-//     TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISWHITE);
-//     TIFFSetField(out, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
-//     TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, (uint32)height);
-//     TIFFSetField(out, TIFFTAG_XRESOLUTION, (float)dpi);
-//     TIFFSetField(out, TIFFTAG_YRESOLUTION, (float)dpi);
-//     TIFFSetField(out, TIFFTAG_RESOLUTIONUNIT, RESUNIT_INCH);
-//     TIFFWriteRawStrip(out, 0, ccitt_buf, (tmsize_t)ccitt_size);
-//     TIFFClose(out);
-// }
+void WriteCCITTTIFF(const char* filename,
+                    uint32_t width, uint32_t height,
+                    unsigned char* buf, size_t buf_size,
+                    int dpi, int compression, int gray)
+{
+    TIFF* out = TIFFOpen(filename, "w");
+    if (!out) return;
+    TIFFSetField(out, TIFFTAG_IMAGEWIDTH, width);
+    TIFFSetField(out, TIFFTAG_IMAGELENGTH, height);
+    TIFFSetField(out, TIFFTAG_COMPRESSION, compression);
+    TIFFSetField(out, TIFFTAG_XRESOLUTION, (float)dpi);
+    TIFFSetField(out, TIFFTAG_YRESOLUTION, (float)dpi);
+    TIFFSetField(out, TIFFTAG_RESOLUTIONUNIT, RESUNIT_INCH);
+
+
+    if (compression == COMPRESSION_CCITTFAX4) {
+        TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISWHITE);
+        TIFFSetField(out, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
+        TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
+        TIFFSetField(out, TIFFTAG_BITSPERSAMPLE, 1);
+        TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
+
+        TIFFWriteRawStrip(out, 0, buf, (tmsize_t)buf_size);
+    } else if (compression == COMPRESSION_JPEG) {
+        if (gray) {
+            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
+        } else {
+            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 3);
+        }
+        TIFFSetField(out, TIFFTAG_BITSPERSAMPLE,   8);
+
+        TIFFSetField(out, TIFFTAG_PLANARCONFIG,    PLANARCONFIG_CONTIG);
+        // Если вам нужен конкретный JPEG-quality, можно дополнительно:
+        TIFFSetField(out, TIFFTAG_JPEGQUALITY,  90);
+        TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
+        TIFFWriteEncodedStrip(out, 0, (tdata_t)buf, (tmsize_t)(width * height * (gray ? 1 : 3)));
+        //tdata_t scanline = buf;
+        // unsigned char *pixels = buf;
+        // tsize_t rowbytes = width * (gray ? 1 : 3);
+        // for (uint32_t row = 0; row < height; row++) {
+        // unsigned char *line = pixels + row * rowbytes;
+        //     if (TIFFWriteScanline(out, (tdata_t)line, row, 0) < 0) {
+        //         // тут можно залогировать ошибку
+        //         break;
+        //     }
+        // }
+    } else {
+        if (gray) {
+            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
+            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
+        } else {
+            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 3);
+        }
+        TIFFSetField(out, TIFFTAG_BITSPERSAMPLE,   8);
+        TIFFSetField(out, TIFFTAG_PLANARCONFIG,    PLANARCONFIG_CONTIG);
+        TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
+        TIFFWriteEncodedStrip(out, 0, (tdata_t)buf, (tmsize_t)(width * height * (gray ? 1 : 3)));
+    }
+    TIFFClose(out);
+}
 
 */
 import "C"
@@ -739,6 +805,14 @@ import (
 	"errors"
 	"fmt"
 	"unsafe"
+)
+
+const (
+	// TIFF compression types
+	CompressionNone    = C.COMPRESSION_NONE
+	CompressionCCITTG4 = C.COMPRESSION_CCITTFAX4
+	CompressionJPEG    = C.COMPRESSION_JPEG
+	CompressionLZW     = C.COMPRESSION_LZW
 )
 
 type ImageData struct {
@@ -801,7 +875,14 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 		}, nil
 	}
 
+	rawFlag := 0
+
+	if convParams.Raw {
+		rawFlag = 1
+	}
+
 	rc := C.convert_tiff_to_data(
+		C.int(rawFlag),
 		cPath,
 		C.int(convParams.TargetRGBjpegQuality),
 		C.int(convParams.TargetGrayjpegQuality),
@@ -865,6 +946,38 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 		Height:    int(h),
 		ActualDpi: actDPI,
 	}, nil
+}
+
+func saveDataToTIFFFile(filePath string, width, height int, data []byte, dpi int, compression int, gray bool) error {
+
+	fmt.Println("saveDataToTIFFFile: filePath:", filePath, "width:", width, "height:", height, "dpi:", dpi)
+
+	// преобразуем Go-string в C-string
+	cFilePath := C.CString(filePath)
+	defer C.free(unsafe.Pointer(cFilePath))
+
+	// копируем слайс в C-память
+	cBuf := C.CBytes(data)
+	defer C.free(cBuf)
+
+	grayInt := 0
+	if gray {
+		grayInt = 1
+	}
+
+	// вызываем C-функцию
+	C.WriteCCITTTIFF(
+		cFilePath,
+		C.uint32_t(width),
+		C.uint32_t(height),
+		(*C.uchar)(cBuf),
+		C.size_t(len(data)),
+		C.int(dpi),
+		C.int(compression),
+		C.int(grayInt),
+	)
+
+	return nil
 }
 
 // ConvertTIFFtoData reads TIFF from file path and returns JPEG-encoded []byte + width, height, dpi
