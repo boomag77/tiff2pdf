@@ -3,7 +3,7 @@ package converter
 import "sort"
 
 // otsuThreshold считает оптимальный порог по методу Оцу
-func otsuThreshold(gray []byte) uint8 {
+func OtsuThreshold(gray []byte) uint8 {
 	var hist [256]int
 	for _, v := range gray {
 		hist[v]++
@@ -38,7 +38,7 @@ func otsuThreshold(gray []byte) uint8 {
 }
 
 // morphologyClose выполняет 3×3 замыкание: сначала дилатацию, потом эрозию
-func morphologyClose(bin []uint8, w, h int) []uint8 {
+func MorphologyClose(bin []uint8, w, h int) []uint8 {
 	size := w * h
 	dil := make([]uint8, size)
 	// дилатация
@@ -71,7 +71,7 @@ func morphologyClose(bin []uint8, w, h int) []uint8 {
 func packGrayTo1BitOtsuClose(gray []byte, width, height int) []byte {
 	n := width * height
 	// 1) выберем порог
-	thresh := otsuThreshold(gray)
+	thresh := OtsuThreshold(gray)
 	// 2) бинаризация
 	bin := make([]uint8, n)
 	for i := 0; i < n; i++ {
@@ -80,7 +80,7 @@ func packGrayTo1BitOtsuClose(gray []byte, width, height int) []byte {
 		}
 	}
 	// 3) замыкание, чтобы заполнить мелкие дыры и соединить прогоны
-	closed := morphologyClose(bin, width, height)
+	closed := MorphologyClose(bin, width, height)
 	// 4) упаковка в 1-битный буфер
 	rowBytes := (width + 7) / 8
 	out := make([]byte, rowBytes*height)

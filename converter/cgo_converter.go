@@ -30,8 +30,8 @@ package converter
 
 #define GRAY_THRESHOLD 2
 #define GRAY_RATIO 0.9
-#define LOWER_THRESHOLD 30
-#define UPPER_THRESHOLD 225
+#define LOWER_THRESHOLD 5
+#define UPPER_THRESHOLD 250
 #define CCITT_THRESHOLD 98
 
 
@@ -735,13 +735,14 @@ int ExtractCCITTRaw(const char*     path,
     return 0;
 }
 
-void WriteCCITTTIFF(const char* filename,
+void WriteTIFF(const char* filename,
                     uint32_t width, uint32_t height,
                     unsigned char* buf, size_t buf_size,
                     int dpi, int compression, int gray)
 {
     TIFF* out = TIFFOpen(filename, "w");
     if (!out) return;
+
     TIFFSetField(out, TIFFTAG_IMAGEWIDTH, width);
     TIFFSetField(out, TIFFTAG_IMAGELENGTH, height);
     TIFFSetField(out, TIFFTAG_COMPRESSION, compression);
@@ -750,7 +751,8 @@ void WriteCCITTTIFF(const char* filename,
     TIFFSetField(out, TIFFTAG_RESOLUTIONUNIT, RESUNIT_INCH);
 
 
-    if (compression == COMPRESSION_CCITTFAX4) {
+    if (compression == COMPRESSION_CCITTFAX4)
+    {
         TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISWHITE);
         TIFFSetField(out, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
         TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
@@ -758,7 +760,9 @@ void WriteCCITTTIFF(const char* filename,
         TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
 
         TIFFWriteRawStrip(out, 0, buf, (tmsize_t)buf_size);
-    } else if (compression == COMPRESSION_JPEG) {
+    }
+        else if (compression == COMPRESSION_JPEG)
+    {
         if (gray) {
             TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
             TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
@@ -773,16 +777,7 @@ void WriteCCITTTIFF(const char* filename,
         TIFFSetField(out, TIFFTAG_JPEGQUALITY,  90);
         TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
         TIFFWriteEncodedStrip(out, 0, (tdata_t)buf, (tmsize_t)(width * height * (gray ? 1 : 3)));
-        //tdata_t scanline = buf;
-        // unsigned char *pixels = buf;
-        // tsize_t rowbytes = width * (gray ? 1 : 3);
-        // for (uint32_t row = 0; row < height; row++) {
-        // unsigned char *line = pixels + row * rowbytes;
-        //     if (TIFFWriteScanline(out, (tdata_t)line, row, 0) < 0) {
-        //         // тут можно залогировать ошибку
-        //         break;
-        //     }
-        // }
+
     } else {
         if (gray) {
             TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
@@ -804,6 +799,10 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"unsafe"
 )
 
@@ -904,7 +903,9 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 		dataSize := int(outSize)
 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(dataSize))
 
-		//filtered := medianFilterLight(goGray, int(w), int(h))
+		// filtered := medianFilterLight(goGray, int(w), int(h))
+		// filtered := medianFilterLight(goGray, int(w), int(h))
+		//packed := packGrayTo1BitDither(goGray, int(w), int(h))
 		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
 
 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
@@ -948,112 +949,145 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 	}, nil
 }
 
-func saveDataToTIFFFile(filePath string, width, height int, data []byte, dpi int, compression int, gray bool) error {
+func saveDataToTIFFFile(tiffMode string, origFilePath string, outputs []string, width, height int, data []byte, dpi int, compression int, gray bool) error {
 
-	fmt.Println("saveDataToTIFFFile: filePath:", filePath, "width:", width, "height:", height, "dpi:", dpi)
+	//fmt.Println("saveDataToTIFFFile: filePath:", filePath, "width:", width, "height:", height, "dpi:", dpi)
 
-	// преобразуем Go-string в C-string
-	cFilePath := C.CString(filePath)
-	defer C.free(unsafe.Pointer(cFilePath))
+	if tiffMode == "convert" {
+		base := filepath.Base(origFilePath)
+		fileName := strings.TrimSuffix(base, filepath.Ext(base))
+		tmpProcessedFileName := fileName + ".tmp"
+		processedFileName := fileName + ".tif"
 
-	// копируем слайс в C-память
-	cBuf := C.CBytes(data)
-	defer C.free(cBuf)
+		cBuf := C.CBytes(data)
+		defer C.free(cBuf)
+		grayInt := 0
+		if gray {
+			grayInt = 1
+		}
 
-	grayInt := 0
-	if gray {
-		grayInt = 1
+		var wg sync.WaitGroup
+		errs := make(chan error, len(outputs))
+
+		for _, outDir := range outputs {
+			outDir := outDir // Capture to local variable
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				tmpProcessedFilePath := filepath.Join(outDir, tmpProcessedFileName)
+				cTmp := C.CString(tmpProcessedFilePath)
+				defer C.free(unsafe.Pointer(cTmp))
+
+				C.WriteTIFF(
+					cTmp,
+					C.uint32_t(width),
+					C.uint32_t(height),
+					(*C.uchar)(cBuf),
+					C.size_t(len(data)),
+					C.int(dpi),
+					C.int(compression),
+					C.int(grayInt),
+				)
+				info, err := os.Stat(tmpProcessedFilePath)
+				if err != nil {
+					errs <- fmt.Errorf("failed to get file info: %v", err)
+					return
+				}
+				if info.Size() == 0 {
+					errs <- fmt.Errorf("file is empty: %s", tmpProcessedFilePath)
+					return
+				}
+				if err := os.Rename(tmpProcessedFilePath, filepath.Join(outDir, processedFileName)); err != nil {
+					errs <- fmt.Errorf("failed to rename file: %v", err)
+					return
+				}
+				errs <- nil
+			}()
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				return fmt.Errorf("error saving TIFF file: %v", err)
+			}
+		}
+	} else if tiffMode == "replace" {
+		base := filepath.Base(origFilePath)
+		fileName := strings.TrimSuffix(base, filepath.Ext(base))
+		tmpProcessedFileName := fileName + ".tmp"
+		processedFileName := fileName + ".tif"
+		tmpProcessedFilePath := filepath.Join(filepath.Dir(origFilePath), tmpProcessedFileName)
+		processedFilePath := filepath.Join(filepath.Dir(origFilePath), processedFileName)
+		cBuf := C.CBytes(data)
+		defer C.free(cBuf)
+		grayInt := 0
+		if gray {
+			grayInt = 1
+		}
+		cTmp := C.CString(tmpProcessedFilePath)
+		defer C.free(unsafe.Pointer(cTmp))
+		C.WriteTIFF(
+			cTmp,
+			C.uint32_t(width),
+			C.uint32_t(height),
+			(*C.uchar)(cBuf),
+			C.size_t(len(data)),
+			C.int(dpi),
+			C.int(compression),
+			C.int(grayInt),
+		)
+		info, err := os.Stat(tmpProcessedFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to get file info: %v", err)
+		}
+		if info.Size() == 0 {
+			return fmt.Errorf("file is empty: %s", tmpProcessedFilePath)
+		}
+		_ = os.Remove(origFilePath)
+		if err := os.Rename(tmpProcessedFilePath, processedFilePath); err != nil {
+			return fmt.Errorf("failed to rename file: %v", err)
+		}
+	} else if tiffMode == "append" {
+		base := filepath.Base(origFilePath)
+		fileName := strings.TrimSuffix(base, filepath.Ext(base))
+		tmpProcessedFileName := fileName + ".tmp"
+		processedFileName := "_" + fileName + ".tif"
+		tmpProcessedFilePath := filepath.Join(filepath.Dir(origFilePath), tmpProcessedFileName)
+		processedFilePath := filepath.Join(filepath.Dir(origFilePath), processedFileName)
+		cBuf := C.CBytes(data)
+		defer C.free(cBuf)
+		grayInt := 0
+		if gray {
+			grayInt = 1
+		}
+		cTmp := C.CString(tmpProcessedFilePath)
+		defer C.free(unsafe.Pointer(cTmp))
+		C.WriteTIFF(
+			cTmp,
+			C.uint32_t(width),
+			C.uint32_t(height),
+			(*C.uchar)(cBuf),
+			C.size_t(len(data)),
+			C.int(dpi),
+			C.int(compression),
+			C.int(grayInt),
+		)
+		info, err := os.Stat(tmpProcessedFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to get file info: %v", err)
+		}
+		if info.Size() == 0 {
+			return fmt.Errorf("file is empty: %s", tmpProcessedFilePath)
+		}
+		if err := os.Rename(tmpProcessedFilePath, processedFilePath); err != nil {
+			return fmt.Errorf("failed to rename file: %v", err)
+		}
+	} else {
+		return fmt.Errorf("unsupported tiffMode: %s", tiffMode)
 	}
-
-	// вызываем C-функцию
-	C.WriteCCITTTIFF(
-		cFilePath,
-		C.uint32_t(width),
-		C.uint32_t(height),
-		(*C.uchar)(cBuf),
-		C.size_t(len(data)),
-		C.int(dpi),
-		C.int(compression),
-		C.int(grayInt),
-	)
 
 	return nil
 }
-
-// ConvertTIFFtoData reads TIFF from file path and returns JPEG-encoded []byte + width, height, dpi
-// func ConvertTIFFtoData(path string, quality int, dpi int) (data []byte, ccitt int, gray int, width, height, actualDpi int, err error) {
-// 	cPath := C.CString(path) // Converts Go string to C string
-// 	defer func() {
-// 		if cPath != nil {
-// 			C.free(unsafe.Pointer(cPath))
-// 		}
-// 	}()
-
-// 	var outBuf *C.uchar
-// 	var outSize C.ulong
-// 	var w, h, d C.int
-// 	var use_ccitt C.int
-// 	var use_gray C.int
-
-// 	comp := C.get_compression_type(cPath)
-// 	if comp == 2 || comp == 3 || comp == 4 {
-// 		// CCITT
-// 		ccitt := 1
-// 		rc := C.ExtractCCITTRaw(
-// 			cPath,
-// 			&outBuf, &outSize,
-// 			&w, &h)
-// 		if rc != 0 {
-// 			C.free(unsafe.Pointer(outBuf))
-// 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("ExtractCCITTRaw failed with code %d", int(rc))
-// 		}
-// 		data = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-// 		if outBuf != nil {
-// 			C.free(unsafe.Pointer(outBuf))
-// 		}
-// 		return data, ccitt, 0, int(w), int(h), dpi, nil
-// 	}
-
-// 	rc := C.convert_tiff_to_data(
-// 		cPath,
-// 		C.int(quality),
-// 		C.int(dpi),
-// 		&outBuf, &outSize,
-// 		&use_ccitt,
-// 		&use_gray,
-// 		&w, &h, &d,
-// 	)
-
-// 	if rc != 0 {
-// 		if outBuf != nil {
-// 			C.free(unsafe.Pointer(outBuf))
-// 		}
-// 		return nil, 0, 0, 0, 0, 0, fmt.Errorf("convert_tiff_to_data failed with code %d", int(rc))
-// 	}
-
-// 	if use_ccitt == 1 {
-// 		goGray := C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-
-// 		//filtered := medianFilterLight(goGray, int(w), int(h))
-// 		packed := packGrayTo1BitOtsuClose(goGray, int(w), int(h))
-
-// 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
-
-// 		ccittData, encodeErr := EncodeRawCCITTG4(packed, int(w), int(h))
-// 		if encodeErr != nil {
-// 			return nil, 0, 0, 0, 0, 0, fmt.Errorf("ccittg4 encode failed: %v", encodeErr)
-// 		}
-
-// 		return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
-// 	}
-
-// 	data = C.GoBytes(unsafe.Pointer(outBuf), C.int(outSize))
-
-// 	if outBuf != nil {
-// 		C.free(unsafe.Pointer(outBuf))
-// 	}
-// 	return data, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
-// }
 
 func EncodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
 	if len(bits) != ((width+7)/8)*height {

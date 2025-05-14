@@ -14,6 +14,14 @@ import (
 	"time"
 )
 
+const (
+	Red    = "\x1b[31m"
+	Green  = "\x1b[32m"
+	Yellow = "\x1b[33m"
+	Blue   = "\x1b[34m"
+	Reset  = "\x1b[0m"
+)
+
 type BoxFolder = contracts.BoxFolder
 type TIFFfolder = contracts.TIFFfolder
 type ConversionRequest = contracts.ConversionRequest
@@ -117,10 +125,12 @@ func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters,
 
 func processTIFFFolder(cfg convertFolderParam) error {
 
-	decodeTiffTaskChan := make(chan decodeTiffTask)
+	tiffMode := cfg.convParams.TIFFMode
 	filesCount := len(cfg.tiffFolder.TiffFilesPaths)
-	resultChan := make(chan convertResult, filesCount)
+	var processedFilesCount int = 0
 
+	decodeTiffTaskChan := make(chan decodeTiffTask)
+	resultChan := make(chan convertResult, filesCount)
 	numWorkers := min(runtime.NumCPU(), filesCount)
 
 	wg := &sync.WaitGroup{}
@@ -134,46 +144,51 @@ func processTIFFFolder(cfg convertFolderParam) error {
 
 	go func() {
 		for result := range resultChan {
-			fmt.Printf("Processing file %s, page %d\n", cfg.tiffFolder.TiffFilesPaths[result.pageIndex], result.pageIndex)
-			filePath := filepath.Join(cfg.outputDirs[0], filepath.Base(cfg.tiffFolder.TiffFilesPaths[result.pageIndex]))
+			origFilePath := cfg.tiffFolder.TiffFilesPaths[result.pageIndex]
+			//tiffFileName := filepath.Base(cfg.tiffFolder.TiffFilesPaths[result.pageIndex])
+			//fmt.Printf("Processing file %s", tiffFileName)
+			fmt.Printf("Processed %d%% \r", processedFilesCount*100/filesCount)
+			//filePath := filepath.Join(cfg.outputDirs[0], tiffFileName)
+			var compression int
+			var targetDPI int
+			var grayImage bool
+
 			if result.ccitt {
-				fmt.Printf("CCITT image: %s, size: %d\n", result.imageId, len(result.imgBuffer))
-				saveDataToTIFFFile(filePath,
-					result.pixelWidth,
-					result.pixelHeight,
-					result.imgBuffer,
-					cfg.convParams.TargetGraydpi,
-					CompressionCCITTG4,
-					true,
-				)
+				compression = CompressionCCITTG4
+				targetDPI = cfg.convParams.TargetGraydpi
+				grayImage = true
 			} else {
 				if result.gray {
-
-					fmt.Printf("Grayscale image: %s, size: %d\n", result.imageId, len(result.imgBuffer))
-					saveDataToTIFFFile(filePath,
-						result.pixelWidth,
-						result.pixelHeight,
-						result.imgBuffer,
-						cfg.convParams.TargetGraydpi,
-						CompressionJPEG,
-						true,
-					)
+					compression = CompressionJPEG
+					targetDPI = cfg.convParams.TargetGraydpi
+					grayImage = true
 				} else {
-					fmt.Printf("RGB image: %s, size: %d\n", result.imageId, len(result.imgBuffer))
-					saveDataToTIFFFile(filePath,
-						result.pixelWidth,
-						result.pixelHeight,
-						result.imgBuffer,
-						cfg.convParams.TargetRGBdpi,
-						CompressionJPEG,
-						false,
-					)
+					compression = CompressionLZW
+					targetDPI = cfg.convParams.TargetRGBdpi
+					grayImage = false
 				}
 			}
-			//fmt.Println("Saving image to folder: ", cfg.outputDirs[0])
-
-			// Process the result here
-			// For example, save the image to a file or send it to another channel
+			err := saveDataToTIFFFile(
+				tiffMode,
+				origFilePath,
+				cfg.outputDirs,
+				result.pixelWidth,
+				result.pixelHeight,
+				result.imgBuffer,
+				targetDPI,
+				compression,
+				grayImage,
+			)
+			if err != nil {
+				fmt.Printf("Error saving processed TIFF file %s: %v\n", filepath.Base(origFilePath), err)
+				continue
+			}
+			processedFilesCount++
+		}
+		if processedFilesCount == filesCount {
+			fmt.Println(string(Green), "All files processed and saved successfully", string(Reset))
+		} else {
+			fmt.Printf("%sProcessed %d files out of %d%s\n", Red, processedFilesCount, filesCount, Reset)
 		}
 		close(done)
 	}()
@@ -421,7 +436,7 @@ func Convert(request ConversionRequest) error {
 						TIFFMode:      request.Parameters.TIFFMode,
 					},
 				}
-				fmt.Println(folderParams)
+				//fmt.Println(folderParams)
 				err := processTIFFFolder(folderParams)
 				if err != nil {
 					fmt.Printf("Error during conversion in subdirectory %s: %v\n", tiffFolder.Name, err)
