@@ -76,11 +76,11 @@ func validateFlags(args InputFlags) []error {
 		errs = append(errs, fmt.Errorf("CCITT mode must be either 'on', 'off' or 'auto'"))
 	}
 
-	if args.RGBdpi < 10 {
-		errs = append(errs, fmt.Errorf("RGB DPI must be greater than or equal to 10"))
+	if args.RGBdpi <= 0 {
+		errs = append(errs, fmt.Errorf("RGB DPI must be positive"))
 	}
-	if args.GrayDpi < 10 {
-		errs = append(errs, fmt.Errorf("gray DPI must be greater than or equal to 10"))
+	if args.GrayDpi <= 0 {
+		errs = append(errs, fmt.Errorf("gray DPI must be positive"))
 	}
 	if args.RGBJpegQuality < 1 || args.RGBJpegQuality > 100 {
 		errs = append(errs, fmt.Errorf("RGB JPEG quality must be between 1 and 100"))
@@ -117,9 +117,9 @@ func main() {
 	flag.Parse()
 
 	// for testing
-	flag.Visit(func(f *flag.Flag) {
-		fmt.Printf("Пойман флаг: %s = %s\n", f.Name, f.Value)
-	})
+	// flag.Visit(func(f *flag.Flag) {
+	// 	fmt.Printf("Пойман флаг: %s = %s\n", f.Name, f.Value)
+	// })
 
 	params := InputFlags{
 		InputRootDir:    *inputRootDir,
@@ -173,12 +173,12 @@ func main() {
 	if len(params.OutputDir) > 0 {
 		fmt.Println("OUTPUT DIR(s):\n", strings.Join(params.OutputDir, "\n "))
 	}
-	if params.RGBdpi >= 0 {
+	if params.RGBdpi > 0 {
 		fmt.Println("TARGET RGB DPI: ", params.RGBdpi)
 	} else {
 		fmt.Println("TARGET RGB DPI: Image original")
 	}
-	if params.GrayDpi >= 0 {
+	if params.GrayDpi > 0 {
 		fmt.Println("TARGET GRAY DPI: ", params.GrayDpi)
 	} else {
 		fmt.Println("TARGET GRAY DPI: Image original")

@@ -2,7 +2,7 @@ package converter
 
 import "sort"
 
-// otsuThreshold считает оптимальный порог по методу Оцу
+// otsuThreshold calculating optimal treshold Otsu
 func OtsuThreshold(gray []byte) uint8 {
 	var hist [256]int
 	for _, v := range gray {
@@ -37,11 +37,11 @@ func OtsuThreshold(gray []byte) uint8 {
 	return threshold
 }
 
-// morphologyClose выполняет 3×3 замыкание: сначала дилатацию, потом эрозию
+// morphologyClose perform 3×3 closure: firts dilate, then erode
 func MorphologyClose(bin []uint8, w, h int) []uint8 {
 	size := w * h
 	dil := make([]uint8, size)
-	// дилатация
+	// dilate
 	for y := 1; y < h-1; y++ {
 		for x := 1; x < w-1; x++ {
 			idx := y*w + x
@@ -52,7 +52,7 @@ func MorphologyClose(bin []uint8, w, h int) []uint8 {
 			}
 		}
 	}
-	// эрозия
+	// erode
 	ero := make([]uint8, size)
 	for y := 1; y < h-1; y++ {
 		for x := 1; x < w-1; x++ {
@@ -67,21 +67,21 @@ func MorphologyClose(bin []uint8, w, h int) []uint8 {
 	return ero
 }
 
-// packGrayTo1BitOtsuClose: Otsu → closing → упаковка 1-bit MSB2LSB
+// packGrayTo1BitOtsuClose: Otsu → closing → packing 1-bit MSB2LSB
 func packGrayTo1BitOtsuClose(gray []byte, width, height int) []byte {
 	n := width * height
-	// 1) выберем порог
+	// 1) chose threshold
 	thresh := OtsuThreshold(gray)
-	// 2) бинаризация
+	// 2) binarization
 	bin := make([]uint8, n)
 	for i := 0; i < n; i++ {
 		if gray[i] < thresh {
 			bin[i] = 1
 		}
 	}
-	// 3) замыкание, чтобы заполнить мелкие дыры и соединить прогоны
+	// 3) closure, fill holes etc.
 	closed := MorphologyClose(bin, width, height)
-	// 4) упаковка в 1-битный буфер
+	// 4) packing to 1-bit buffer
 	rowBytes := (width + 7) / 8
 	out := make([]byte, rowBytes*height)
 	for y := 0; y < height; y++ {
@@ -130,7 +130,7 @@ func packGrayTo1Bit(gray []byte, width, height int) []byte {
 			}
 		}
 
-		// если строка не кратна 8 — записать остаток
+		// if the last byte is not full, write it
 		if bitPos != 7 {
 			out[dstRowStart] = b
 		}
@@ -143,7 +143,7 @@ func medianFilter(gray []byte, w, h int) []byte {
 	copy(out, gray)
 	for y := 1; y < h-1; y++ {
 		for x := 1; x < w-1; x++ {
-			// соберём 3×3 соседей
+			// get 9 (3x3) neighbors
 			s := gray[(y-1)*w+x-1 : (y+2)*w+x+2]
 			sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
 			out[y*w+x] = s[len(s)/2]
@@ -160,7 +160,7 @@ func medianFilterLight(gray []byte, w, h int) []byte {
 	for y := 1; y < h-1; y++ {
 		base := y * w
 		for x := 1; x < w-1; x++ {
-			// Собираем 9 соседей
+			// get 9 (3x3) neighbors
 			idx := 0
 			for dy := -1; dy <= 1; dy++ {
 				row := (y+dy)*w + x - 1
@@ -169,9 +169,9 @@ func medianFilterLight(gray []byte, w, h int) []byte {
 				win[idx+2] = gray[row+2]
 				idx += 3
 			}
-			// Сортируем 9 элементов
+			// sorting 9 elements
 			sort.Slice(win[:], func(i, j int) bool { return win[i] < win[j] })
-			// Средний элемент
+			// median is the middle element
 			out[base+x] = win[4]
 		}
 	}
@@ -179,7 +179,7 @@ func medianFilterLight(gray []byte, w, h int) []byte {
 }
 
 func packGrayTo1BitDither(gray []byte, width, height int) []byte {
-	// Плавающий буфер для накопления ошибок
+	// floating buffer for error diffusion
 	buf := make([]float64, len(gray))
 	for i, v := range gray {
 		buf[i] = float64(v)
@@ -194,7 +194,7 @@ func packGrayTo1BitDither(gray []byte, width, height int) []byte {
 			old := buf[idx]
 			var newVal float64
 			var bitVal uint8
-			// порог 128: темнее → чёрный (1), светлее → белый (0)
+			// treshold 128: darker → black (1), lighter → white (0)
 			if old < 128 {
 				newVal = 0
 				bitVal = 1
@@ -204,27 +204,27 @@ func packGrayTo1BitDither(gray []byte, width, height int) []byte {
 			}
 			err := old - newVal
 
-			// упаковываем бит
+			// packing bit
 			bytePos := y*rowBytes + x/8
 			bitPos := 7 - (x % 8)
 			if bitVal == 1 {
 				out[bytePos] |= 1 << bitPos
 			}
 
-			// распространяем ошибку
-			// Право: 7/16
+			// error diffusion
+			// Right: 7/16
 			if x+1 < width {
 				buf[idx+1] += err * (7.0 / 16.0)
 			}
-			// Снизу-лево: 3/16
+			// Low-left: 3/16
 			if x-1 >= 0 && y+1 < height {
 				buf[(y+1)*width+(x-1)] += err * (3.0 / 16.0)
 			}
-			// Снизу: 5/16
+			// low: 5/16
 			if y+1 < height {
 				buf[(y+1)*width+x] += err * (5.0 / 16.0)
 			}
-			// Снизу-право: 1/16
+			// low-right: 1/16
 			if x+1 < width && y+1 < height {
 				buf[(y+1)*width+(x+1)] += err * (1.0 / 16.0)
 			}
@@ -234,10 +234,10 @@ func packGrayTo1BitDither(gray []byte, width, height int) []byte {
 	return out
 }
 
-// packGrayTo1BitClean делает:
-// 1) простую пороговую бинаризацию (threshold=128)
-// 2) «очистку» изолированных чёрных пикселов (если у пиксела нет чёрных соседей по 4-связности, он становится белым)
-// 3) упаковку в 1-битный MSB2LSB буфер
+// packGrayTo1BitClean performs:
+// 1) simple threshold binarization (threshold=128)
+// 2) "cleaning" of isolated black pixels (if a pixel has no black neighbors in 4-connectivity, it becomes white)
+// 3) packing into a 1-bit MSB-to-LSB buffer
 func packGrayTo1BitClean(gray []byte, width, height int) []byte {
 	n := width * height
 	bin := make([]uint8, n)
@@ -249,14 +249,14 @@ func packGrayTo1BitClean(gray []byte, width, height int) []byte {
 		}
 	}
 
-	// 2) Морфологическая очистка: уберём «одинокие» чёрные точки
-	// (одноразовый проход; если нужно – повторить дважды)
+	// 2) Morphological cleaning: remove "isolated" black pixels
+	// (single pass; repeat twice if necessary)
 	for y := 1; y < height-1; y++ {
 		base := y * width
 		for x := 1; x < width-1; x++ {
 			idx := base + x
 			if bin[idx] == 1 {
-				// сумма 4-соседей: L, R, U, D
+				// sum of 4-neighbors: L, R, U, D
 				sum := bin[idx-1] + bin[idx+1] + bin[idx-width] + bin[idx+width]
 				if sum == 0 {
 					bin[idx] = 0
@@ -265,7 +265,7 @@ func packGrayTo1BitClean(gray []byte, width, height int) []byte {
 		}
 	}
 
-	// 3) Упаковка в 1-битный буфер
+	// 3) Packin to 1-bit MSB-to-LSB buffer
 	rowBytes := (width + 7) / 8
 	out := make([]byte, rowBytes*height)
 	for y := 0; y < height; y++ {

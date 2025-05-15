@@ -11,6 +11,7 @@
 *.vscode
 *.sh
 *.pem
+src/
 example/
 bin/
 keys/

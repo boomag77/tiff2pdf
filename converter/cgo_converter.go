@@ -56,12 +56,12 @@ static tmsize_t writeCallback(thandle_t h, tdata_t buf, tsize_t sz) {
     if ((size_t)newoff > m->size) m->size = newoff;
     return sz;
 }
-// ReadProc для TIFFClientOpen — возвращает 0 байт, нам это не нужно
+// ReadProc for TIFFClientOpen — returns 0 bite
 static tmsize_t readCallback(thandle_t h, tdata_t buf, tsize_t sz) {
     return 0;
 }
 
-// Остальные коллбэки «заглушки»
+// dummies callbacks
 static toff_t sizeCallback(thandle_t h)   { return ((MemBuf*)h)->size; }
 static int     closeCallback(thandle_t h)  { return 0; }
 static toff_t seekCallback(thandle_t h, toff_t off, int whence) {
@@ -84,7 +84,7 @@ static int mapCallback(thandle_t h, tdata_t* p, toff_t* n) {
 static void    unmapCallback(thandle_t h, tdata_t p, toff_t n) {}
 
 
-// Генерируем **только** сырые G4-данные (payload), без TIFF-заголовка:
+// Encoding RAW G4-data (payload), without TIFF-header:
 int EncodeRawG4(
     unsigned char *bits1,
     size_t          width,
@@ -94,7 +94,7 @@ int EncodeRawG4(
 ) {
     MemBuf mb = { .data = NULL, .cap = 0, .size = 0, .off = 0 };
 
-    // Открываем виртуальный TIFF для записи
+    // Open virtual TIFF in memory
     TIFF *tif = TIFFClientOpen(
         "g4", "w",
         (thandle_t)&mb,
@@ -111,7 +111,7 @@ int EncodeRawG4(
         return -1;
     }
 
-    // Устанавливаем необходимые теги
+    // set TIFF tags
     TIFFSetField(tif, TIFFTAG_IMAGEWIDTH,      width);
     TIFFSetField(tif, TIFFTAG_IMAGELENGTH,     height);
     TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE,   1);
@@ -121,11 +121,11 @@ int EncodeRawG4(
     TIFFSetField(tif, TIFFTAG_FILLORDER,       FILLORDER_MSB2LSB);
     TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP,    height);
 
-    // Перед кодированием G4 убедимся, что off == size (обычно 0)
+    // ensure off == size
     seekCallback((thandle_t)&mb, 0, SEEK_END);
     unsigned long payloadStart = mb.size;
 
-    // Записываем один strip — libtiff выполнит G4-кодирование
+    // write one strip — libtiff perform G4-encoding
     tsize_t stripSize = TIFFWriteEncodedStrip(
         tif,
         0,
@@ -139,7 +139,7 @@ int EncodeRawG4(
         return -2;
     }
 
-    // Выделяем payload: именно тот блок, что libtiff добавил после payloadStart
+
     unsigned long payloadLen = mb.size - payloadStart;
     *outBuf  = (unsigned char*)malloc(payloadLen);
     if (!*outBuf) {
@@ -153,7 +153,7 @@ int EncodeRawG4(
     return 0;
 }
 
-
+// Convert RGB to grayscale using SSE2
 void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* ccitt_ready) {
     // const __m128i coeff_r = _mm_set1_epi16(30); // --
     // const __m128i coeff_g = _mm_set1_epi16(59); // --
@@ -196,7 +196,6 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* cc
         }
     }
 
-    //size_t bad_count = 0;
     size_t tail = (npixels / 8) * 8;
     for (size_t i = tail; i < npixels; i++) {
         uint8_t r = rgb[i * 3 + 0];
@@ -209,14 +208,6 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* cc
             bw_pixels--;
         }
     }
-    // double bad_ratio = (double)bad_count / (double)(npixels);
-    // if (bad_ratio < 0.0001) {
-    //     *ccitt_ready = 1;
-    // } else {
-    //     *ccitt_ready = 0;
-    // }
-
-    //size_t good_count = npixels - bad_count;
 
     *ccitt_ready = (bw_pixels * 100 >= npixels * CCITT_THRESHOLD);
 
@@ -268,7 +259,7 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
     return 0;
 }
 
-// TIFF → JPEG via RGBA
+// Read TIFF raster
 int read_raster(const char* path,
                 uint32_t** raster, uint16_t* orig_dpi, size_t* orig_width, size_t* orig_height)
 {
@@ -462,19 +453,19 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
             if (x0 >= (*width)-1)  { x0 = (*width)-2;  wx = 1; }
             int x1 = x0 + 1;
 
-            // четыре пикселя вокруг источника
+            // 4 pixel neighbors
             uint32_t p00 = raster[y0*(*width) + x0];
             uint32_t p10 = raster[y0*(*width) + x1];
             uint32_t p01 = raster[y1*(*width) + x0];
             uint32_t p11 = raster[y1*(*width) + x1];
 
-            // извлекаем каналы
+            // get channels
             uint8_t r00 = TIFFGetR(p00), g00 = TIFFGetG(p00), b00 = TIFFGetB(p00);
             uint8_t r10 = TIFFGetR(p10), g10 = TIFFGetG(p10), b10 = TIFFGetB(p10);
             uint8_t r01 = TIFFGetR(p01), g01 = TIFFGetG(p01), b01 = TIFFGetB(p01);
             uint8_t r11 = TIFFGetR(p11), g11 = TIFFGetG(p11), b11 = TIFFGetB(p11);
 
-            // линейная интерполяция по X
+            // linear interpolation X
             double r0 = r00*(1-wx) + r10*wx;
             double g0 = g00*(1-wx) + g10*wx;
             double b0 = b00*(1-wx) + b10*wx;
@@ -482,7 +473,7 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
             double g1 = g01*(1-wx) + g11*wx;
             double b1 = b01*(1-wx) + b11*wx;
 
-            // линейная интерполяция по Y
+            // linear interpolation Y
             uint8_t rf = (uint8_t)(r0*(1-wy) + r1*wy + 0.5);
             uint8_t gf = (uint8_t)(g0*(1-wy) + g1*wy + 0.5);
             uint8_t bf = (uint8_t)(b0*(1-wy) + b1*wy + 0.5);
@@ -534,7 +525,7 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
     return 0;
 }
 
-// TIFF → JPEG via RGB
+// TIFF → Data (bytes)
 int convert_tiff_to_data(int raw, const char* path,
                         int rgb_quality, int gray_quality,
                         int rgb_target_dpi, int gray_target_dpi,
@@ -596,7 +587,7 @@ int convert_tiff_to_data(int raw, const char* path,
             uint8_t* rgb_buff = NULL;
             rc = read_pxls_resampled_from_raster(raster, &width, &height, &rgb_buff, &gray, &ccitt_ready,
                                                  rgb_target_dpi, orig_dpi);
-            printf("read_pxls_resampled_from_raster rc: height: %zu, width: %zu, gray: %d, ccitt_ready: %d\n", height, width, gray, ccitt_ready);
+            //printf("read_pxls_resampled_from_raster rc: height: %zu, width: %zu, gray: %d, ccitt_ready: %d\n", height, width, gray, ccitt_ready);
             if (rc != 0) {
                 free(raster);
                 free(pixel_buffer);
@@ -606,22 +597,6 @@ int convert_tiff_to_data(int raw, const char* path,
             pixel_buffer = rgb_buff;
         }
     }
-
-
-    // int npixels = width * height;
-
-
-    //int ccitt_ready = 0;
-
-    //uint8_t* gray;
-
-    // if (use_gray) {
-    //     gray = malloc(npixels);
-    //     rgb_to_gray_sse2(rgb, gray, npixels, &ccitt_ready);
-    // }
-
-    //int rc = -1;
-    //ccitt_ready = 0; // exclude/force CCITT for now
 
     if ((ccitt_ready && ccitt_mode == 0) || ccitt_mode == 1) {
         *ccitt_filter = 1;
@@ -691,12 +666,12 @@ int ExtractCCITTRaw(const char*     path,
     TIFF* tif = TIFFOpen(path, "r");
     if (!tif) return -1;
 
-    // Получаем размеры
+    // Get width and height
     size_t w=0, h=0;
     TIFFGetField(tif, TIFFTAG_IMAGEWIDTH,  &w);
     TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
 
-    // Убедимся, что это действительно CCITT-G4
+    // Ensure that it's CCITT-G4
     uint16_t comp=0;
     TIFFGetField(tif, TIFFTAG_COMPRESSION, &comp);
     if (comp != COMPRESSION_CCITTFAX4) {
@@ -704,16 +679,16 @@ int ExtractCCITTRaw(const char*     path,
         return -2;
     }
 
-    // Считаем количество строчек (strips)
+    // counting strips
     int nstrips = TIFFNumberOfStrips(tif);
 
-    // Узнаём общий размер всех raw-строк
+    // Total size raw-lines
     toff_t total = 0;
     for (int i = 0; i < nstrips; i++) {
         total += TIFFRawStripSize(tif, i);
     }
 
-    // Выделяем буфер и читаем подряд
+
     unsigned char* buf = malloc(total);
     if (!buf) {
         TIFFClose(tif);
@@ -773,7 +748,7 @@ void WriteTIFF(const char* filename,
         TIFFSetField(out, TIFFTAG_BITSPERSAMPLE,   8);
 
         TIFFSetField(out, TIFFTAG_PLANARCONFIG,    PLANARCONFIG_CONTIG);
-        // Если вам нужен конкретный JPEG-quality, можно дополнительно:
+
         TIFFSetField(out, TIFFTAG_JPEGQUALITY,  90);
         TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
         TIFFWriteEncodedStrip(out, 0, (tdata_t)buf, (tmsize_t)(width * height * (gray ? 1 : 3)));
@@ -923,7 +898,6 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 			Height:    int(h),
 			ActualDpi: convParams.TargetGraydpi,
 		}, nil
-		//return ccittData, int(use_ccitt), int(use_gray), int(w), int(h), dpi, nil
 	}
 	dataSize := int(outSize)
 	data := C.GoBytes(unsafe.Pointer(outBuf), C.int(dataSize))
@@ -952,6 +926,14 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 func saveDataToTIFFFile(tiffMode string, origFilePath string, outputs []string, width, height int, data []byte, dpi int, compression int, gray bool) error {
 
 	//fmt.Println("saveDataToTIFFFile: filePath:", filePath, "width:", width, "height:", height, "dpi:", dpi)
+
+	// switch tiffMode {
+	// case "convert":
+	// case "replace":
+	// case "append":
+	// default:
+	// 	return fmt.Errorf("unsupported tiffMode: %s", tiffMode)
+	// }
 
 	if tiffMode == "convert" {
 		base := filepath.Base(origFilePath)
