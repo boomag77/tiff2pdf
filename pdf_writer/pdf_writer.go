@@ -135,7 +135,7 @@ func (pw *PDFWriter) WriteGrayJPEGImage(width int, height int, data []byte) erro
 	return nil
 }
 
-func (pw *PDFWriter) WriteContent(imgName string, imgObjID int64, width, height float64) int64 {
+func (pw *PDFWriter) writeContent(imgName string, imgObjID int64, width, height float64) int64 {
 	content := fmt.Sprintf(
 		"q\n%.2f 0 0 %.2f 0 0 cm\n/%s Do\nQ\n",
 		width, height, imgName,
@@ -151,7 +151,7 @@ func (pw *PDFWriter) WriteContent(imgName string, imgObjID int64, width, height 
 	return objID
 }
 
-func (pw *PDFWriter) WritePage(imgName string,
+func (pw *PDFWriter) writePage(imgName string,
 	imgObjID int64,
 	contentID int64,
 	width, height float64) int64 {
@@ -168,7 +168,7 @@ func (pw *PDFWriter) WritePage(imgName string,
 	return objID
 }
 
-func (pw *PDFWriter) WritePages(pageObjIDs []int64) int64 {
+func (pw *PDFWriter) writePages(pageObjIDs []int64) int64 {
 	objID := pw.newObject()
 	pw.bw.WriteString("<<\n")
 	pw.bw.WriteString("/Type /Pages\n")
@@ -181,7 +181,7 @@ func (pw *PDFWriter) WritePages(pageObjIDs []int64) int64 {
 	return objID
 }
 
-func (pw *PDFWriter) WriteCatalog() int64 {
+func (pw *PDFWriter) writeCatalog() int64 {
 	objID := pw.newObject()
 	pw.bw.WriteString("<<\n")
 	pw.bw.WriteString(fmt.Sprintf("/Type /Catalog\n/Pages %d 0 R\n", pw.pagesObjID))
@@ -189,7 +189,7 @@ func (pw *PDFWriter) WriteCatalog() int64 {
 	return objID
 }
 
-func (pw *PDFWriter) CreateDocumentStructure() error {
+func (pw *PDFWriter) createDocumentStructure() error {
 	if err := pw.bw.Flush(); err != nil {
 		return fmt.Errorf("error flushing buffer before creating structure: %v", err)
 	}
@@ -209,10 +209,10 @@ func (pw *PDFWriter) CreateDocumentStructure() error {
 		imgName := fmt.Sprintf("img_%d", i)
 
 		// Сначала Content (команда показать картинку)
-		contentID := pw.WriteContent(imgName, imgID, info.width, info.height)
+		contentID := pw.writeContent(imgName, imgID, info.width, info.height)
 
 		// Потом Страницу
-		pageID := pw.WritePage(imgName, imgID, contentID, info.width, info.height)
+		pageID := pw.writePage(imgName, imgID, contentID, info.width, info.height)
 		pw.pageIDs = append(pw.pageIDs, pageID)
 	}
 
@@ -246,7 +246,7 @@ func (pw *PDFWriter) CreateDocumentStructure() error {
 
 func (pw *PDFWriter) Finish() error {
 
-	if err := pw.CreateDocumentStructure(); err != nil {
+	if err := pw.createDocumentStructure(); err != nil {
 		return fmt.Errorf("failed to create document structure before finishing: %v", err)
 	}
 

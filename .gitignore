@@ -19,3 +19,4 @@ deps/
 out/
 ccittg4/
 integration_tests/
+.go

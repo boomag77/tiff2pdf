@@ -1,6 +1,8 @@
 package converter
 
-import "sort"
+import (
+	"sort"
+)
 
 // otsuThreshold calculating optimal treshold Otsu
 func OtsuThreshold(gray []byte) uint8 {

@@ -25,6 +25,7 @@ const (
 type BoxFolder = contracts.BoxFolder
 type TIFFfolder = contracts.TIFFfolder
 type ConversionRequest = contracts.ConversionRequest
+type Converter = contracts.Converter
 
 type convertResult struct {
 	imgBuffer []byte
@@ -33,12 +34,12 @@ type convertResult struct {
 	//imgBuffer   io.Reader
 	pixelWidth  int
 	pixelHeight int
-	drawWidth   float64
-	drawHeight  float64
-	x, y        float64
-	pageIndex   int
-	gray        bool
-	ccitt       bool
+	// drawWidth   float64
+	// drawHeight  float64
+	x, y      float64
+	pageIndex int
+	gray      bool
+	ccitt     bool
 }
 
 type ConversionParameters struct {
@@ -69,12 +70,6 @@ type ConvertedDestination struct {
 	tmpFile     *os.File
 }
 
-// type savePDFTask struct {
-// 	boxConvertedPath string
-// 	outputPath       string
-// 	pdf              *gofpdf.Fpdf
-// }
-
 type OutputFormat string
 
 const (
@@ -101,8 +96,8 @@ func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters,
 		//buf := bytes.NewBuffer(data)
 		buf := img.Data
 
-		mmImgWidth := float64(img.Width) * 25.4 / float64(img.ActualDpi)
-		mmImgHeight := float64(img.Height) * 25.4 / float64(img.ActualDpi)
+		// mmImgWidth := float64(img.Width) * 25.4 / float64(img.ActualDpi)
+		// mmImgHeight := float64(img.Height) * 25.4 / float64(img.ActualDpi)
 		x := 0.0
 		y := 0.0
 		task.resultCh <- convertResult{
@@ -113,11 +108,11 @@ func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters,
 			ccitt:       img.CCITT != 0,
 			gray:        img.Gray,
 			imgFormat:   string(imgFormat),
-			drawWidth:   mmImgWidth,
-			drawHeight:  mmImgHeight,
-			x:           x,
-			y:           y,
-			pageIndex:   task.pageNumber,
+			// drawWidth:   mmImgWidth,
+			// drawHeight:  mmImgHeight,
+			x:         x,
+			y:         y,
+			pageIndex: task.pageNumber,
 		}
 	}
 
@@ -163,7 +158,7 @@ func processTIFFFolder(cfg convertFolderParam) error {
 					targetDPI = cfg.convParams.TargetGraydpi
 					grayImage = true
 				} else {
-					compression = CompressionLZW
+					compression = CompressionJPEG
 					targetDPI = cfg.convParams.TargetRGBdpi
 					grayImage = false
 				}
