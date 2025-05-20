@@ -9,6 +9,7 @@ package converter
 #cgo LDFLAGS: -ljpeg -ltiff
 
 #include <ccitt_encoder.h>
+#include <ccitt_extractor.h>
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -21,6 +22,8 @@ package converter
 #include <limits.h>
 
 #include <emmintrin.h> // SSE2
+
+
 
 #ifndef TIFFTAG_JPEGCOLORMODE
 #define TIFFTAG_JPEGCOLORMODE 65538
@@ -542,59 +545,6 @@ int get_compression_type(const char* path) {
     return (int)compression;
 }
 
-int ExtractCCITTRaw(const char*     path,
-                    unsigned char** outBuf,
-                    unsigned long*  outSize,
-                    size_t*         width,
-                    size_t*         height)
-{
-    TIFF* tif = TIFFOpen(path, "r");
-    if (!tif) return -1;
-
-    // Get width and height
-    size_t w=0, h=0;
-    TIFFGetField(tif, TIFFTAG_IMAGEWIDTH,  &w);
-    TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &h);
-
-    // Ensure that it's CCITT-G4
-    uint16_t comp=0;
-    TIFFGetField(tif, TIFFTAG_COMPRESSION, &comp);
-    if (comp != COMPRESSION_CCITTFAX4) {
-        TIFFClose(tif);
-        return -2;
-    }
-
-    // counting strips
-    int nstrips = TIFFNumberOfStrips(tif);
-
-    // Total size raw-lines
-    toff_t total = 0;
-    for (int i = 0; i < nstrips; i++) {
-        total += TIFFRawStripSize(tif, i);
-    }
-
-
-    unsigned char* buf = malloc(total);
-    if (!buf) {
-        TIFFClose(tif);
-        return -3;
-    }
-    toff_t offset = 0;
-    for (int i = 0; i < nstrips; i++) {
-        int sz = TIFFRawStripSize(tif, i);
-        TIFFReadRawStrip(tif, i, buf + offset, sz);
-        offset += sz;
-    }
-
-    TIFFClose(tif);
-
-    *outBuf  = buf;
-    *outSize = total;
-    *width   = w;
-    *height  = h;
-    return 0;
-}
-
 void WriteTIFF(const char* filename,
                     uint32_t width, uint32_t height,
                     unsigned char* buf, size_t buf_size,
@@ -712,7 +662,7 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 	if comp == 2 || comp == 3 || comp == 4 {
 		// CCITT
 		ccitt := 1
-		rc := C.ExtractCCITTRaw(
+		rc := C.extract_ccitt_raw(
 			cPath,
 			&outBuf, &outSize,
 			&w, &h)
