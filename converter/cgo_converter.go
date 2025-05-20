@@ -10,7 +10,7 @@ package converter
 
 #include <ccitt_encoder.h>
 #include <ccitt_extractor.h>
-
+#include <raster_reader.h>
 
 
 #include <stdlib.h>
@@ -27,6 +27,7 @@ package converter
 
 #include <settings.h>
 #include <tiff_writer.h>
+
 
 // Convert RGB to grayscale using SSE2
 void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* ccitt_ready) {
@@ -131,60 +132,7 @@ int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
     return 0;
 }
 
-// Read TIFF raster
-int read_raster(const char* path,
-                uint32_t** raster, uint16_t* orig_dpi, size_t* orig_width, size_t* orig_height)
-{
-    TIFF* tif = TIFFOpen(path, "r");
-    if (!tif) return -1;
 
-    TIFFSetWarningHandler(NULL);
-
-    size_t width = 0, height = 0;
-
-    if (!TIFFGetField(tif, TIFFTAG_IMAGEWIDTH, &width) ||
-        !TIFFGetField(tif, TIFFTAG_IMAGELENGTH, &height)) {
-        TIFFClose(tif);
-        return -2;
-    }
-
-    float xres = 0.0f, yres = 0.0f;
-    uint16_t resUnit = RESUNIT_NONE;
-    *orig_dpi = 0;
-
-    if (TIFFGetField(tif, TIFFTAG_XRESOLUTION, &xres) &&
-        TIFFGetField(tif, TIFFTAG_YRESOLUTION, &yres) &&
-        TIFFGetField(tif, TIFFTAG_RESOLUTIONUNIT, &resUnit)) {
-        if (resUnit == RESUNIT_INCH) {
-            *orig_dpi = (uint16_t)(xres + 0.5f);
-        } else if (resUnit == RESUNIT_CENTIMETER) {
-            *orig_dpi = (uint16_t)(xres * 2.54f + 0.5f);
-        }
-    }
-
-    if (width != 0 && height > SIZE_MAX / width) {
-        TIFFClose(tif);
-        return -3;
-    }
-
-    *orig_width = width;
-    *orig_height = height;
-
-    *raster = malloc(width * height * sizeof(uint32_t));
-    if (!*raster) {
-        TIFFClose(tif);
-        return -4;
-    }
-
-    if (!TIFFReadRGBAImageOriented(tif, width, height, *raster, ORIENTATION_TOPLEFT, 0)) {
-        free(*raster);
-        TIFFClose(tif);
-        return -5;
-    }
-
-    TIFFClose(tif);
-    return 0;
-}
 
 // read pixels to rgb
 int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
@@ -647,7 +595,7 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 
 		C.free(unsafe.Pointer(outBuf)) // Освобождаем оригинальный буфер
 
-		ccittData, encodeErr := EncodeRawCCITTG4(packed, int(w), int(h))
+		ccittData, encodeErr := encodeRawCCITTG4(packed, int(w), int(h))
 		if encodeErr != nil {
 			return ImageData{}, fmt.Errorf("ccittg4 encode failed: %v", encodeErr)
 		}
@@ -833,7 +781,7 @@ func saveDataToTIFFFile(tiffMode string, origFilePath string, outputs []string, 
 	return nil
 }
 
-func EncodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
+func encodeRawCCITTG4(bits []byte, width, height int) ([]byte, error) {
 	if len(bits) != ((width+7)/8)*height {
 		return nil, errors.New("invalid packed bits length")
 	}
