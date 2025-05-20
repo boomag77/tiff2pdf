@@ -1,8 +1,9 @@
-
-#include <tiffio.h>
+#include <stdlib.h>
 #include <string.h> 
-#include <stdlib.h> 
-#include "ccitt_encoder.h"
+#include <tiffio.h>
+
+#include "settings.h"
+#include "converter.h"
 
 
 typedef struct {
@@ -54,7 +55,7 @@ static int mapCallback(thandle_t h, tdata_t* p, toff_t* n) {
 static void    unmapCallback(thandle_t h, tdata_t p, toff_t n) {}
 
 // Encoding RAW G4-data (payload), without TIFF-header:
-int EncodeRawG4(
+int encode_raw_g4(
     unsigned char *bits1,
     size_t          width,
     size_t          height,

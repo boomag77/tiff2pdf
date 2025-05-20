@@ -218,7 +218,7 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 
 	decodeTiffTaskChan := make(chan decodeTiffTask)
 	filesCount := len(cfg.tiffFolder.TiffFilesPaths)
-	numWorkers := min(runtime.NumCPU()-1, filesCount)
+	numWorkers := min(runtime.NumCPU(), filesCount)
 	resultChan := make(chan convertResult, numWorkers)
 
 	wg := &sync.WaitGroup{}

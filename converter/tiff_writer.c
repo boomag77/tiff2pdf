@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <tiffio.h>
 
-#include <tiff_writer.h>
+#include "settings.h"
+
+#include "converter.h"
 
 
 void write_tiff(const char* filename,

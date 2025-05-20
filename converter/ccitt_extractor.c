@@ -2,7 +2,9 @@
 #include <string.h>
 #include <tiffio.h>
 
-#include "ccitt_extractor.h"
+#include "settings.h"
+
+#include "converter.h"
 
 
 int extract_ccitt_raw(const char*     path,
