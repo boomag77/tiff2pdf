@@ -5,7 +5,7 @@ package converter
 
 /*
 
-//#cgo LDFLAGS: -ljpeg -ltiff
+#cgo LDFLAGS: -ljpeg -ltiff
 
 
 #include <stdlib.h>

@@ -6,7 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sort"
+
+	//"sort"
 	"strings"
 	"sync"
 	"tiff2pdf/contracts"
@@ -122,11 +123,12 @@ func processTIFFFolder(cfg convertFolderParam) error {
 
 	tiffMode := cfg.convParams.TIFFMode
 	filesCount := len(cfg.tiffFolder.TiffFilesPaths)
+	numWorkers := min(runtime.NumCPU(), filesCount)
+
 	var processedFilesCount int = 0
 
 	decodeTiffTaskChan := make(chan decodeTiffTask)
-	resultChan := make(chan convertResult, filesCount)
-	numWorkers := min(runtime.NumCPU(), filesCount)
+	resultChan := make(chan convertResult, numWorkers)
 
 	wg := &sync.WaitGroup{}
 
@@ -190,6 +192,7 @@ func processTIFFFolder(cfg convertFolderParam) error {
 
 	for i, file := range cfg.tiffFolder.TiffFilesPaths {
 		task := decodeTiffTask{
+
 			filePath:   file,
 			pageNumber: i,
 			resultCh:   resultChan,
@@ -215,9 +218,8 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 
 	decodeTiffTaskChan := make(chan decodeTiffTask)
 	filesCount := len(cfg.tiffFolder.TiffFilesPaths)
-	resultChan := make(chan convertResult, filesCount)
-
-	numWorkers := min(runtime.NumCPU(), filesCount)
+	numWorkers := min(runtime.NumCPU()-1, filesCount)
+	resultChan := make(chan convertResult, numWorkers)
 
 	wg := &sync.WaitGroup{}
 
@@ -377,11 +379,11 @@ func Convert(request ConversionRequest) error {
 
 	maxConversions := foldersCount
 
-	if foldersCount > 1 {
-		sort.SliceStable(request.Folders, func(i, j int) bool {
-			return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)
-		})
-	}
+	// if foldersCount > 1 {
+	// 	sort.SliceStable(request.Folders, func(i, j int) bool {
+	// 		return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)
+	// 	})
+	// }
 
 	var wg sync.WaitGroup
 
