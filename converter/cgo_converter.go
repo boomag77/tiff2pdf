@@ -12,6 +12,7 @@ package converter
 #include <ccitt_extractor.h>
 
 
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -25,6 +26,7 @@ package converter
 #include <emmintrin.h> // SSE2
 
 #include <settings.h>
+#include <tiff_writer.h>
 
 // Convert RGB to grayscale using SSE2
 void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* ccitt_ready) {
@@ -527,64 +529,7 @@ int get_compression_type(const char* path) {
     return (int)compression;
 }
 
-void WriteTIFF(const char* filename,
-                    uint32_t width, uint32_t height,
-                    unsigned char* buf, size_t buf_size,
-                    int dpi, int compression, int gray)
-{
-    TIFF* out = TIFFOpen(filename, "w");
-    if (!out) return;
 
-    TIFFSetField(out, TIFFTAG_IMAGEWIDTH, width);
-    TIFFSetField(out, TIFFTAG_IMAGELENGTH, height);
-    TIFFSetField(out, TIFFTAG_COMPRESSION, compression);
-    TIFFSetField(out, TIFFTAG_XRESOLUTION, (float)dpi);
-    TIFFSetField(out, TIFFTAG_YRESOLUTION, (float)dpi);
-    TIFFSetField(out, TIFFTAG_RESOLUTIONUNIT, RESUNIT_INCH);
-
-
-    if (compression == COMPRESSION_CCITTFAX4)
-    {
-        TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISWHITE);
-        TIFFSetField(out, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
-        TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
-        TIFFSetField(out, TIFFTAG_BITSPERSAMPLE, 1);
-        TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
-
-        TIFFWriteRawStrip(out, 0, buf, (tmsize_t)buf_size);
-    }
-        else if (compression == COMPRESSION_JPEG)
-    {
-        if (gray) {
-            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
-            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
-        } else {
-            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
-            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 3);
-        }
-        TIFFSetField(out, TIFFTAG_BITSPERSAMPLE,   8);
-
-        TIFFSetField(out, TIFFTAG_PLANARCONFIG,    PLANARCONFIG_CONTIG);
-
-        TIFFSetField(out, TIFFTAG_JPEGQUALITY,  90);
-        TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
-        TIFFWriteEncodedStrip(out, 0, (tdata_t)buf, (tmsize_t)(width * height * (gray ? 1 : 3)));
-
-    } else {
-        if (gray) {
-            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
-            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 1);
-        } else {
-            TIFFSetField(out, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
-            TIFFSetField(out, TIFFTAG_SAMPLESPERPIXEL, 3);
-        }
-        TIFFSetField(out, TIFFTAG_BITSPERSAMPLE,   8);
-        TIFFSetField(out, TIFFTAG_PLANARCONFIG,    PLANARCONFIG_CONTIG);
-        TIFFSetField(out, TIFFTAG_ROWSPERSTRIP, height);
-        TIFFWriteEncodedStrip(out, 0, (tdata_t)buf, (tmsize_t)(width * height * (gray ? 1 : 3)));
-    }
-    TIFFClose(out);
-}
 
 */
 import "C"
@@ -777,7 +722,7 @@ func saveDataToTIFFFile(tiffMode string, origFilePath string, outputs []string, 
 				cTmp := C.CString(tmpProcessedFilePath)
 				defer C.free(unsafe.Pointer(cTmp))
 
-				C.WriteTIFF(
+				C.write_tiff(
 					cTmp,
 					C.uint32_t(width),
 					C.uint32_t(height),
@@ -825,7 +770,7 @@ func saveDataToTIFFFile(tiffMode string, origFilePath string, outputs []string, 
 		}
 		cTmp := C.CString(tmpProcessedFilePath)
 		defer C.free(unsafe.Pointer(cTmp))
-		C.WriteTIFF(
+		C.write_tiff(
 			cTmp,
 			C.uint32_t(width),
 			C.uint32_t(height),
@@ -861,7 +806,7 @@ func saveDataToTIFFFile(tiffMode string, origFilePath string, outputs []string, 
 		}
 		cTmp := C.CString(tmpProcessedFilePath)
 		defer C.free(unsafe.Pointer(cTmp))
-		C.WriteTIFF(
+		C.write_tiff(
 			cTmp,
 			C.uint32_t(width),
 			C.uint32_t(height),
