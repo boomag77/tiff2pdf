@@ -11,6 +11,7 @@ package converter
 #include <ccitt_encoder.h>
 #include <ccitt_extractor.h>
 
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,32 +24,14 @@ package converter
 
 #include <emmintrin.h> // SSE2
 
-
-
-#ifndef TIFFTAG_JPEGCOLORMODE
-#define TIFFTAG_JPEGCOLORMODE 65538
-#endif
-
-#ifndef JPEGCOLORMODE_RGB
-#define JPEGCOLORMODE_RGB     1
-#endif
-
-#define GRAY_THRESHOLD 2
-#define GRAY_RATIO 0.9
-#define LOWER_THRESHOLD 5
-#define UPPER_THRESHOLD 250
-#define CCITT_THRESHOLD 98
-
-
+#include <settings.h>
 
 // Convert RGB to grayscale using SSE2
 void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* ccitt_ready) {
-    // const __m128i coeff_r = _mm_set1_epi16(30); // --
-    // const __m128i coeff_g = _mm_set1_epi16(59); // --
-    // const __m128i coeff_b = _mm_set1_epi16(11); // --
-    const __m128i coeff_r = _mm_set1_epi16(77); // ++
-    const __m128i coeff_g = _mm_set1_epi16(150); // ++
-    const __m128i coeff_b = _mm_set1_epi16(29); // ++
+
+    const __m128i coeff_r = _mm_set1_epi16(77);
+    const __m128i coeff_g = _mm_set1_epi16(150);
+    const __m128i coeff_b = _mm_set1_epi16(29);
     const __m128i zero = _mm_setzero_si128();
 
     size_t bw_pixels = npixels;
@@ -89,8 +72,7 @@ void rgb_to_gray_sse2(const uint8_t* rgb, uint8_t* gray, size_t npixels, int* cc
         uint8_t r = rgb[i * 3 + 0];
         uint8_t g = rgb[i * 3 + 1];
         uint8_t b = rgb[i * 3 + 2];
-        //gray[i] = (r * 30 + g * 59 + b * 11) / 100; // --
-        gray[i] = (r * 77 + g * 150 + b * 29) >> 8;   // ++
+        gray[i] = (r * 77 + g * 150 + b * 29) >> 8;
         if (gray[i] > LOWER_THRESHOLD && gray[i] < UPPER_THRESHOLD) {
             //bad_count++;
             bw_pixels--;

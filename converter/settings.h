@@ -1,0 +1,18 @@
+#ifndef SETTINGS_H
+#define SETTINGS_H
+
+#ifndef TIFFTAG_JPEGCOLORMODE
+#define TIFFTAG_JPEGCOLORMODE 65538
+#endif
+
+#ifndef JPEGCOLORMODE_RGB
+#define JPEGCOLORMODE_RGB     1
+#endif
+
+#define GRAY_THRESHOLD 2
+#define GRAY_RATIO 0.9
+#define LOWER_THRESHOLD 5
+#define UPPER_THRESHOLD 250
+#define CCITT_THRESHOLD 98
+
+#endif
