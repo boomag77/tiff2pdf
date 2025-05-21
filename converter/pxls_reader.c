@@ -43,9 +43,12 @@ int read_pxls_from_raster(uint32_t* raster, size_t* width, size_t* height,
             px = raster[y * (*width) + x];
             dst = (y * (*width) + x) * 3;
 
-            r = TIFFGetR(px);
-            g = TIFFGetG(px);
-            b = TIFFGetB(px);
+            // r = TIFFGetR(px);
+            // g = TIFFGetG(px);
+            // b = TIFFGetB(px);
+            r = (px >> 0) & 0xFF;
+            g = (px >> 8) & 0xFF;
+            b = (px >> 16) & 0xFF;
             rgb[dst + 0] = r;
             rgb[dst + 1] = g;
             rgb[dst + 2] = b;

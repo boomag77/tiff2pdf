@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"tiff2pdf/contracts"
 )
 
-//type PDFWriter = contracts.PDFWriter
+// type PDFWriter = contracts.PDFWriter
+
+type ConvertResult = contracts.ConvertResult
 
 type PDFWriter struct {
 	objects    []int64
@@ -65,7 +68,24 @@ func (pw *PDFWriter) newObject() int64 {
 	return int64(pw.objNum)
 }
 
-func (pw *PDFWriter) WriteCCITTImage(width int, height int, data []byte) error {
+func (pw *PDFWriter) WriteImage(image *ConvertResult) error {
+	if image.CCITT {
+		if err := pw.writeCCITTImage(image.PixelWidth, image.PixelHeight, image.ImgBuffer); err != nil {
+			return fmt.Errorf("error writing CCITT image: %v", err)
+		}
+	} else if image.Gray {
+		if err := pw.writeGrayJPEGImage(image.PixelWidth, image.PixelHeight, image.ImgBuffer); err != nil {
+			return fmt.Errorf("error writing grayscale JPEG image: %v", err)
+		}
+	} else {
+		if err := pw.writeRGBJPEGImage(image.PixelWidth, image.PixelHeight, image.ImgBuffer); err != nil {
+			return fmt.Errorf("error writing RGB JPEG image: %v", err)
+		}
+	}
+	return nil
+}
+
+func (pw *PDFWriter) writeCCITTImage(width int, height int, data []byte) error {
 	imgID := pw.newObject()
 	pw.imageInfos = append(pw.imageInfos, ImageInfo{
 		id:     imgID,
@@ -73,7 +93,7 @@ func (pw *PDFWriter) WriteCCITTImage(width int, height int, data []byte) error {
 		height: float64(height),
 	})
 
-	pw.bw.WriteString("<<\n") // <-- Открываем основной словарь изображения
+	pw.bw.WriteString("<<\n") // <-- open main dictionary of image
 	pw.bw.WriteString("/Type /XObject\n")
 	pw.bw.WriteString("/Subtype /Image\n")
 	pw.bw.WriteString(fmt.Sprintf("/Width %d\n/Height %d\n", width, height))
@@ -81,23 +101,23 @@ func (pw *PDFWriter) WriteCCITTImage(width int, height int, data []byte) error {
 	pw.bw.WriteString("/BitsPerComponent 1\n")
 	pw.bw.WriteString("/Filter /CCITTFaxDecode\n")
 
-	// Открываем словарь DecodeParms
+	// open dictionary DecodeParms
 	pw.bw.WriteString("/DecodeParms <<\n")
 	pw.bw.WriteString(fmt.Sprintf("/K -1\n/Columns %d\n/Rows %d\n/BlackIs1 false\n", width, height))
-	pw.bw.WriteString(">>\n") // <-- Закрываем только словарь DecodeParms
+	pw.bw.WriteString(">>\n") // <-- close only DecodeParms dictionary
 
-	// Запись /Length должна быть в основном словаре изображения
+	// Line /Length should be in the main dictionary
 	pw.bw.WriteString(fmt.Sprintf("/Length %d\n", len(data)))
 
-	pw.bw.WriteString(">>\n")     // <-- Закрываем основной словарь изображения
-	pw.bw.WriteString("stream\n") // <-- Ключевое слово stream сразу после закрытия основного словаря с одним переводом строки
+	pw.bw.WriteString(">>\n")     // <-- close main dictionary of image
+	pw.bw.WriteString("stream\n") // <-- key word "stream" right after closing main dictionary and single new line
 	pw.bw.Write(data)
 	pw.bw.WriteString("\nendstream\n")
 	pw.bw.WriteString("endobj\n")
 	return nil
 }
 
-func (pw *PDFWriter) WriteRGBJPEGImage(width int, height int, data []byte) error {
+func (pw *PDFWriter) writeRGBJPEGImage(width int, height int, data []byte) error {
 	imgID := pw.newObject()
 	pw.imageInfos = append(pw.imageInfos, ImageInfo{
 		id:     imgID,
@@ -116,7 +136,7 @@ func (pw *PDFWriter) WriteRGBJPEGImage(width int, height int, data []byte) error
 	return nil
 }
 
-func (pw *PDFWriter) WriteGrayJPEGImage(width int, height int, data []byte) error {
+func (pw *PDFWriter) writeGrayJPEGImage(width int, height int, data []byte) error {
 	imgID := pw.newObject()
 	pw.imageInfos = append(pw.imageInfos, ImageInfo{
 		id:     imgID,
@@ -168,33 +188,33 @@ func (pw *PDFWriter) writePage(imgName string,
 	return objID
 }
 
-func (pw *PDFWriter) writePages(pageObjIDs []int64) int64 {
-	objID := pw.newObject()
-	pw.bw.WriteString("<<\n")
-	pw.bw.WriteString("/Type /Pages\n")
-	pw.bw.WriteString(fmt.Sprintf("/Count %d\n", len(pageObjIDs)))
-	pw.bw.WriteString("/Kids [\n")
-	for _, id := range pageObjIDs {
-		pw.bw.WriteString(fmt.Sprintf("%d 0 R ", id))
-	}
-	pw.bw.WriteString("]\n>>\nendobj\n")
-	return objID
-}
+// func (pw *PDFWriter) writePages(pageObjIDs []int64) int64 {
+// 	objID := pw.newObject()
+// 	pw.bw.WriteString("<<\n")
+// 	pw.bw.WriteString("/Type /Pages\n")
+// 	pw.bw.WriteString(fmt.Sprintf("/Count %d\n", len(pageObjIDs)))
+// 	pw.bw.WriteString("/Kids [\n")
+// 	for _, id := range pageObjIDs {
+// 		pw.bw.WriteString(fmt.Sprintf("%d 0 R ", id))
+// 	}
+// 	pw.bw.WriteString("]\n>>\nendobj\n")
+// 	return objID
+// }
 
-func (pw *PDFWriter) writeCatalog() int64 {
-	objID := pw.newObject()
-	pw.bw.WriteString("<<\n")
-	pw.bw.WriteString(fmt.Sprintf("/Type /Catalog\n/Pages %d 0 R\n", pw.pagesObjID))
-	pw.bw.WriteString(">>\nendobj\n")
-	return objID
-}
+// func (pw *PDFWriter) writeCatalog() int64 {
+// 	objID := pw.newObject()
+// 	pw.bw.WriteString("<<\n")
+// 	pw.bw.WriteString(fmt.Sprintf("/Type /Catalog\n/Pages %d 0 R\n", pw.pagesObjID))
+// 	pw.bw.WriteString(">>\nendobj\n")
+// 	return objID
+// }
 
 func (pw *PDFWriter) createDocumentStructure() error {
 	if err := pw.bw.Flush(); err != nil {
 		return fmt.Errorf("error flushing buffer before creating structure: %v", err)
 	}
 
-	// 1. Создаём пустой объект Pages
+	// create empty object for Pages
 	pw.pagesObjID = pw.newObject()
 
 	pw.bw.WriteString("<<\n")
@@ -203,23 +223,23 @@ func (pw *PDFWriter) createDocumentStructure() error {
 	pw.bw.WriteString("/Kids []\n") // Пока пусто
 	pw.bw.WriteString(">>\nendobj\n")
 
-	// 2. Создаём Content и Page для каждого изображения
+	// create Content and Page for each image
 	for i, info := range pw.imageInfos {
 		imgID := info.id
 		imgName := fmt.Sprintf("img_%d", i)
 
-		// Сначала Content (команда показать картинку)
+		// first Content
 		contentID := pw.writeContent(imgName, imgID, info.width, info.height)
 
-		// Потом Страницу
+		// second - Page
 		pageID := pw.writePage(imgName, imgID, contentID, info.width, info.height)
 		pw.pageIDs = append(pw.pageIDs, pageID)
 	}
 
-	// 🔥 ВАЖНО: Обновляем offset для Pages перед его перезаписью!
+	// Update offset 
 	pw.objects[pw.pagesObjID-1] = pw.getOffset()
 
-	// 3. Перезаписываем объект Pages с правильным списком Kids
+	// Overrite Pages with Kids
 	pw.bw.WriteString(fmt.Sprintf("%d 0 obj\n", pw.pagesObjID))
 	pw.bw.WriteString("<<\n")
 	pw.bw.WriteString("/Type /Pages\n")
@@ -230,13 +250,13 @@ func (pw *PDFWriter) createDocumentStructure() error {
 	}
 	pw.bw.WriteString("]\n>>\nendobj\n")
 
-	// 4. Создаём Catalog
+	// create Catalog
 	pw.catalogObjID = pw.newObject()
 	pw.bw.WriteString("<<\n")
 	pw.bw.WriteString(fmt.Sprintf("/Type /Catalog\n/Pages %d 0 R\n", pw.pagesObjID))
 	pw.bw.WriteString(">>\nendobj\n")
 
-	// 5. Сброс буфера
+	// buffer flush
 	if err := pw.bw.Flush(); err != nil {
 		return fmt.Errorf("error flushing buffer after creating structure: %v", err)
 	}

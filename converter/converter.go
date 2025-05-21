@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	//"sort"
+	"sort"
 	"strings"
 	"sync"
 	"tiff2pdf/contracts"
@@ -27,21 +27,7 @@ type BoxFolder = contracts.BoxFolder
 type TIFFfolder = contracts.TIFFfolder
 type ConversionRequest = contracts.ConversionRequest
 type Converter = contracts.Converter
-
-type convertResult struct {
-	imgBuffer []byte
-	imageId   string
-	imgFormat string
-	//imgBuffer   io.Reader
-	pixelWidth  int
-	pixelHeight int
-	// drawWidth   float64
-	// drawHeight  float64
-	x, y      float64
-	pageIndex int
-	gray      bool
-	ccitt     bool
-}
+type ConvertResult = contracts.ConvertResult
 
 type ConversionParameters struct {
 	CCITT                 string
@@ -62,7 +48,7 @@ type convertFolderParam struct {
 type decodeTiffTask struct {
 	filePath   string
 	pageNumber int
-	resultCh   chan convertResult
+	resultCh   chan ConvertResult
 }
 
 type ConvertedDestination struct {
@@ -85,8 +71,6 @@ var imgFormat OutputFormat = jpgFormat
 func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	// dpi := 300
-
 	for task := range taskChan {
 
 		img, err := ConvertTIFF(task.filePath, convCfg)
@@ -99,21 +83,21 @@ func convertWorker(taskChan <-chan decodeTiffTask, convCfg ConversionParameters,
 
 		// mmImgWidth := float64(img.Width) * 25.4 / float64(img.ActualDpi)
 		// mmImgHeight := float64(img.Height) * 25.4 / float64(img.ActualDpi)
-		x := 0.0
-		y := 0.0
-		task.resultCh <- convertResult{
-			imageId:     fmt.Sprintf("img_%d", task.pageNumber),
-			imgBuffer:   buf,
-			pixelWidth:  img.Width,
-			pixelHeight: img.Height,
-			ccitt:       img.CCITT != 0,
-			gray:        img.Gray,
-			imgFormat:   string(imgFormat),
+		//x := 0.0
+		//y := 0.0
+		task.resultCh <- ConvertResult{
+			ImageId:     fmt.Sprintf("img_%d", task.pageNumber),
+			ImgBuffer:   buf,
+			PixelWidth:  img.Width,
+			PixelHeight: img.Height,
+			CCITT:       img.CCITT != 0,
+			Gray:        img.Gray,
+			ImgFormat:   string(imgFormat),
 			// drawWidth:   mmImgWidth,
 			// drawHeight:  mmImgHeight,
-			x:         x,
-			y:         y,
-			pageIndex: task.pageNumber,
+			//x:         x,
+			//y:         y,
+			PageIndex: task.pageNumber,
 		}
 	}
 
@@ -128,7 +112,7 @@ func processTIFFFolder(cfg convertFolderParam) error {
 	var processedFilesCount int = 0
 
 	decodeTiffTaskChan := make(chan decodeTiffTask)
-	resultChan := make(chan convertResult, numWorkers)
+	resultChan := make(chan ConvertResult, numWorkers)
 
 	wg := &sync.WaitGroup{}
 
@@ -141,7 +125,7 @@ func processTIFFFolder(cfg convertFolderParam) error {
 
 	go func() {
 		for result := range resultChan {
-			origFilePath := cfg.tiffFolder.TiffFilesPaths[result.pageIndex]
+			origFilePath := cfg.tiffFolder.TiffFilesPaths[result.PageIndex]
 			//tiffFileName := filepath.Base(cfg.tiffFolder.TiffFilesPaths[result.pageIndex])
 			//fmt.Printf("Processing file %s", tiffFileName)
 			fmt.Printf("Processed %d%% \r", processedFilesCount*100/filesCount)
@@ -150,12 +134,12 @@ func processTIFFFolder(cfg convertFolderParam) error {
 			var targetDPI int
 			var grayImage bool
 
-			if result.ccitt {
+			if result.CCITT {
 				compression = CompressionCCITTG4
 				targetDPI = cfg.convParams.TargetGraydpi
 				grayImage = true
 			} else {
-				if result.gray {
+				if result.Gray {
 					compression = CompressionJPEG
 					targetDPI = cfg.convParams.TargetGraydpi
 					grayImage = true
@@ -169,9 +153,9 @@ func processTIFFFolder(cfg convertFolderParam) error {
 				tiffMode,
 				origFilePath,
 				cfg.outputDirs,
-				result.pixelWidth,
-				result.pixelHeight,
-				result.imgBuffer,
+				result.PixelWidth,
+				result.PixelHeight,
+				result.ImgBuffer,
 				targetDPI,
 				compression,
 				grayImage,
@@ -219,7 +203,7 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 	decodeTiffTaskChan := make(chan decodeTiffTask)
 	filesCount := len(cfg.tiffFolder.TiffFilesPaths)
 	numWorkers := min(runtime.NumCPU(), filesCount)
-	resultChan := make(chan convertResult, numWorkers)
+	resultChan := make(chan ConvertResult, numWorkers)
 
 	wg := &sync.WaitGroup{}
 
@@ -261,10 +245,12 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 
 	multipleWriter := io.MultiWriter(writers...)
 
-	pdfWriter, _ := pdf_writer.NewPDFWriter(multipleWriter)
-	// TODO : add error handling for pdfWriter
+	pdfWriter, errNewPDFWriter := pdf_writer.NewPDFWriter(multipleWriter)
+	if errNewPDFWriter != nil {
+		return fmt.Errorf("error creating PDF writer: %v", errNewPDFWriter)
+	}
 
-	resultsBuffer := make(map[int]convertResult, filesCount)
+	results := make([]*ConvertResult, filesCount)
 	nextIndex := 0
 
 	done := make(chan struct{})
@@ -272,50 +258,18 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 	go func() {
 		for result := range resultChan {
 
-			resultsBuffer[result.pageIndex] = result
+			results[result.PageIndex] = &result
 
-			for {
+			for nextIndex < len(results) && results[nextIndex] != nil {
 
-				result, ok := resultsBuffer[nextIndex]
-				if !ok {
-					break
-				}
-
-				if result.ccitt {
-					if err := pdfWriter.WriteCCITTImage(
-						result.pixelWidth,
-						result.pixelHeight,
-						result.imgBuffer,
-					); err == nil {
-						pdfPageCount++
-					} else {
-						fmt.Printf("Error writing CCITT image: %v\n", err)
-					}
+				err := pdfWriter.WriteImage(results[nextIndex])
+				if err != nil {
+					fmt.Printf("Failed writing image to PDF: %v\n", err)
+					os.Exit(1)
 				} else {
-					if result.gray {
-						if err := pdfWriter.WriteGrayJPEGImage(
-							result.pixelWidth,
-							result.pixelHeight,
-							result.imgBuffer,
-						); err == nil {
-							pdfPageCount++
-						} else {
-							fmt.Printf("Error writing grayscale image: %v\n", err)
-						}
-					} else {
-						if err := pdfWriter.WriteRGBJPEGImage(
-							result.pixelWidth,
-							result.pixelHeight,
-							result.imgBuffer,
-						); err == nil {
-							pdfPageCount++
-						} else {
-							fmt.Printf("Error writing RGB image: %v\n", err)
-						}
-					}
+					pdfPageCount++
 				}
-
-				delete(resultsBuffer, nextIndex)
+				results[nextIndex] = nil
 				nextIndex++
 			}
 
@@ -379,11 +333,11 @@ func Convert(request ConversionRequest) error {
 
 	maxConversions := foldersCount
 
-	// if foldersCount > 1 {
-	// 	sort.SliceStable(request.Folders, func(i, j int) bool {
-	// 		return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)
-	// 	})
-	// }
+	if foldersCount > 1 {
+		sort.SliceStable(request.Folders, func(i, j int) bool {
+			return len(request.Folders[i].TiffFilesPaths) > len(request.Folders[j].TiffFilesPaths)
+		})
+	}
 
 	var wg sync.WaitGroup
 
