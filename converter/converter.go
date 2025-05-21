@@ -265,7 +265,7 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 				err := pdfWriter.WriteImage(results[nextIndex])
 				if err != nil {
 					fmt.Printf("Failed writing image to PDF: %v\n", err)
-					os.Exit(1)
+					//os.Exit(1)
 				} else {
 					pdfPageCount++
 				}
@@ -322,8 +322,13 @@ func convertFolderToPDF(cfg convertFolderParam) (err error) {
 	}
 
 	endTime := time.Since(startTime)
-	fmt.Println("Folder " + dirName + " - " + fmt.Sprint(len(cfg.tiffFolder.TiffFilesPaths)) +
-		" files converted to PDF with " + fmt.Sprint(pdfPageCount) + " pages. With time: " + endTime.String())
+	if pdfPageCount != len(cfg.tiffFolder.TiffFilesPaths) {
+		fmt.Printf("Warning: %d pages written to PDF file, but %d TIFF files were processed\n", pdfPageCount, len(cfg.tiffFolder.TiffFilesPaths))
+	} else {
+		fmt.Println("Folder " + dirName + " - " + fmt.Sprint(len(cfg.tiffFolder.TiffFilesPaths)) +
+			" files converted to PDF with " + fmt.Sprint(pdfPageCount) + " pages. With time: " + endTime.String())
+	}
+
 	return nil
 }
 

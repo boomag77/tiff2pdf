@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"tiff2pdf/contracts"
 	"tiff2pdf/converter"
 	"tiff2pdf/files_manager"
@@ -234,17 +236,14 @@ func main() {
 		}
 	}
 
-	// ctx, cancel := context.WithCancel(context.Background())
-	// defer cancel()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 
-	// signals := make(chan os.Signal, 1)
-	// signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
-
-	// go func() {
-	// 	sig := <-signals
-	// 	fmt.Printf("Received signal: %s. Exiting...\n", sig)
-	// 	cancel()
-	// }()
+	go func() {
+		sig := <-signals
+		fmt.Printf("Received signal: %s. Exiting...\n", sig)
+		os.Exit(1)
+	}()
 
 	if err := converter.Convert(request); err != nil {
 		fmt.Printf("Error during conversion: %v\n", err)
