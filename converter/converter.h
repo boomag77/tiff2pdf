@@ -21,8 +21,8 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
                                     int target_dpi, int orig_dpi);
 
 typedef struct {
-    int raw;
     const char* path;
+    int raw;
     int rgb_quality;
     int gray_quality;
     int rgb_target_dpi;
@@ -37,6 +37,7 @@ int convert_tiff_to_data(const tiff_convert_options* options,
 int write_jpeg_to_mem(uint32_t width, uint32_t height, uint8_t* buffer,
                       int quality, int dpi, int gray,
                       unsigned char** out, unsigned long* outSize);
+
 
 int encode_raw_g4(
     unsigned char *bits1,
@@ -58,5 +59,6 @@ void write_tiff(const char* filename,
                     uint32_t width, uint32_t height,
                     unsigned char* buf, size_t buf_size,
                     int dpi, int compression, int gray);
-
-#endif
+       
+                    
+#endif // CONVERTER_H

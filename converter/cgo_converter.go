@@ -40,10 +40,10 @@ const (
 type ImageData struct {
 	Data      []byte
 	CCITT     int
-	Gray      bool
 	Width     int
 	Height    int
 	ActualDpi int
+	Gray      bool
 }
 
 func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error) {
@@ -104,8 +104,8 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 	}
 
 	options := C.tiff_convert_options{
-		raw:             C.int(rawFlag),
 		path:            cPath,
+		raw:             C.int(rawFlag),
 		rgb_quality:     C.int(convParams.TargetRGBjpegQuality),
 		gray_quality:    C.int(convParams.TargetGrayjpegQuality),
 		rgb_target_dpi:  C.int(convParams.TargetRGBdpi),
