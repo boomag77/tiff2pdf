@@ -3,12 +3,14 @@
 #include "converter.h"
 
 
-int convert_tiff_to_data(int raw, const char* path,
-                        int rgb_quality, int gray_quality,
-                        int rgb_target_dpi, int gray_target_dpi,
-                         unsigned char** outBuf, unsigned long* outSize,
-                         int* ccitt_filter, bool* gray_filter,
-                         size_t* outWidth, size_t* outHeight, int* outDpi)
+int convert_tiff_to_data(const tiff_convert_options* options,
+                         unsigned char** outBuf, 
+                         unsigned long* outSize,
+                         int* ccitt_filter, 
+                         bool* gray_filter,
+                         size_t* outWidth, 
+                         size_t* outHeight, 
+                         int* outDpi)
 {
 
     int rc = 0;
@@ -19,10 +21,15 @@ int convert_tiff_to_data(int raw, const char* path,
     size_t orig_width = 0, orig_height = 0;
     uint32_t* raster;
 
-    rc = read_raster(path, &raster, &orig_dpi, &orig_width, &orig_height);
-    if (rc != 0) {
-        return rc;
-    }
+    rc = read_raster(
+        options->path, 
+        &raster, 
+        &orig_dpi, 
+        &orig_width, 
+        &orig_height
+    );
+
+    if (rc != 0) { return rc; }
 
     size_t width = orig_width;
     size_t height = orig_height;
@@ -31,7 +38,15 @@ int convert_tiff_to_data(int raw, const char* path,
     bool gray = false;
     int ccitt_ready = *ccitt_filter;
 
-    rc = read_pxls_from_raster(raster, &width, &height, &pixel_buffer, &gray, &ccitt_ready);
+    rc = read_pxls_from_raster(
+        raster, 
+        &width, 
+        &height, 
+        &pixel_buffer, 
+        &gray, 
+        &ccitt_ready
+    );
+
     if (rc != 0) {
         free(raster);
         free(pixel_buffer);
@@ -39,18 +54,18 @@ int convert_tiff_to_data(int raw, const char* path,
     }
 
     if (orig_dpi == 0) {
-        orig_dpi = gray ? gray_target_dpi : rgb_target_dpi;
+        orig_dpi = gray ? options->gray_target_dpi : options->rgb_target_dpi;
     }
 
-    bool rgb_need_resample = (rgb_target_dpi != orig_dpi);
-    bool gray_need_resample = (gray_target_dpi != orig_dpi);
+    bool rgb_need_resample = (options->rgb_target_dpi != orig_dpi);
+    bool gray_need_resample = (options->gray_target_dpi != orig_dpi);
 
 
     if (gray) {
         if (gray_need_resample) {
             uint8_t* gray_buff = NULL;
             rc = read_pxls_resampled_from_raster(raster, &width, &height, &gray_buff, &gray, &ccitt_ready,
-                gray_target_dpi, orig_dpi);
+                options->gray_target_dpi, orig_dpi);
             if (rc != 0) {
                 free(raster);
                 free(pixel_buffer);
@@ -62,9 +77,16 @@ int convert_tiff_to_data(int raw, const char* path,
     } else if (!gray) {
         if (rgb_need_resample) {
             uint8_t* rgb_buff = NULL;
-            rc = read_pxls_resampled_from_raster(raster, &width, &height, &rgb_buff, &gray, &ccitt_ready,
-                                                 rgb_target_dpi, orig_dpi);
-            //printf("read_pxls_resampled_from_raster rc: height: %zu, width: %zu, gray: %d, ccitt_ready: %d\n", height, width, gray, ccitt_ready);
+            rc = read_pxls_resampled_from_raster(
+                raster, 
+                &width, 
+                &height, 
+                &rgb_buff, 
+                &gray, 
+                &ccitt_ready,
+                options->rgb_target_dpi, 
+                orig_dpi
+            );
             if (rc != 0) {
                 free(raster);
                 free(pixel_buffer);
@@ -82,7 +104,7 @@ int convert_tiff_to_data(int raw, const char* path,
         *outSize = (unsigned long)(width * height);
         *outWidth = width;
         *outHeight = height;
-        *outDpi = gray_target_dpi;
+        *outDpi = options->gray_target_dpi;
         free(raster);
         return 0;
     }
@@ -90,31 +112,38 @@ int convert_tiff_to_data(int raw, const char* path,
     *ccitt_filter = 0;
     *gray_filter = gray ? true : false;
     if (!gray) {
-        if (raw) {
+        if (options->raw) {
             *outBuf = pixel_buffer;
             *outSize = (unsigned long)(width * height * 3);
             *outWidth = width;
             *outHeight = height;
-            *outDpi = rgb_target_dpi;
+            *outDpi = options->rgb_target_dpi;
             free(raster);
             return 0;
         } else {
-            rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, rgb_quality, rgb_target_dpi, gray ? 1 : 0, outBuf, outSize);
-            *outDpi = rgb_target_dpi;
+            rc = write_jpeg_to_mem((uint32_t)width, 
+                                   (uint32_t)height, 
+                                   pixel_buffer, 
+                                   options->rgb_quality, 
+                                   options->rgb_target_dpi, 
+                                   gray ? 1 : 0, 
+                                   outBuf, outSize
+            );
+            *outDpi = options->rgb_target_dpi;
         }
 
     } else {
-        if (raw) {
+        if (options->raw) {
             *outBuf = pixel_buffer;
             *outSize = (unsigned long)(width * height);
             *outWidth = width;
             *outHeight = height;
-            *outDpi = gray_target_dpi;
+            *outDpi = options->gray_target_dpi;
             free(raster);
             return 0;
         } else {
-            rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, gray_quality, gray_target_dpi, gray ? 1 : 0, outBuf, outSize);
-            *outDpi = gray_target_dpi;
+            rc = write_jpeg_to_mem((uint32_t)width, (uint32_t)height, pixel_buffer, options->gray_quality, options->gray_target_dpi, gray ? 1 : 0, outBuf, outSize);
+            *outDpi = options->gray_target_dpi;
         }
     }
 

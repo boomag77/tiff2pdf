@@ -103,13 +103,17 @@ func ConvertTIFF(path string, convParams ConversionParameters) (ImageData, error
 		rawFlag = 1
 	}
 
+	options := C.tiff_convert_options{
+		raw:             C.int(rawFlag),
+		path:            cPath,
+		rgb_quality:     C.int(convParams.TargetRGBjpegQuality),
+		gray_quality:    C.int(convParams.TargetGrayjpegQuality),
+		rgb_target_dpi:  C.int(convParams.TargetRGBdpi),
+		gray_target_dpi: C.int(convParams.TargetGraydpi),
+	}
+
 	rc := C.convert_tiff_to_data(
-		C.int(rawFlag),
-		cPath,
-		C.int(convParams.TargetRGBjpegQuality),
-		C.int(convParams.TargetGrayjpegQuality),
-		C.int(convParams.TargetRGBdpi),
-		C.int(convParams.TargetGraydpi),
+		&options,
 		&outBuf, &outSize,
 		&use_ccitt,
 		&use_gray,

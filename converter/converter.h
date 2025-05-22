@@ -20,9 +20,16 @@ int read_pxls_resampled_from_raster(uint32_t* raster, size_t* width, size_t* hei
                                     uint8_t** pxls_buff, bool* gray, int* ccitt_ready,
                                     int target_dpi, int orig_dpi);
 
-int convert_tiff_to_data(int raw, const char* path,
-                        int rgb_quality, int gray_quality,
-                        int rgb_target_dpi, int gray_target_dpi,
+typedef struct {
+    int raw;
+    const char* path;
+    int rgb_quality;
+    int gray_quality;
+    int rgb_target_dpi;
+    int gray_target_dpi;
+} tiff_convert_options;
+
+int convert_tiff_to_data(const tiff_convert_options* options,
                          unsigned char** outBuf, unsigned long* outSize,
                          int* ccitt_filter, bool* gray_filter,
                          size_t* outWidth, size_t* outHeight, int* outDpi);
